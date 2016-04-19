@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/run/current-system/sw/bin/python
 
 # A linter to warn when binary files are added to the repository
 

@@ -1,4 +1,4 @@
-#! /bin/sh
+#!/nix/store/idm1067y9i6m87crjqrbamdsq2ma5r7p-bash-4.3-p42/bin/sh
 # Attempt to guess a canonical system name.
 #   Copyright 1992-2014 Free Software Foundation, Inc.
 
