@@ -642,7 +642,7 @@ type InstMatch = (ClsInst, [DFunInstType])
 
 type ClsInstLookupResult
      = ( [InstMatch]     -- Successful matches
-       , [ClsInst]       -- These don't match but do unify
+       , [InstMatch]     -- These don't match one-way but do unify
        , [InstMatch] )   -- Unsafe overlapped instances under Safe Haskell
                          -- (see Note [Safe Haskell Overlapping Instances] in
                          -- TcSimplify).
@@ -684,7 +684,7 @@ lookupInstEnv' :: InstEnv          -- InstEnv to look in
                -> VisibleOrphanModules   -- But filter against this
                -> Class -> [Type]  -- What we are looking for
                -> ([InstMatch],    -- Successful matches
-                   [ClsInst])     -- These don't match but do unify
+                   [InstMatch])     -- These don't match but do unify
 -- The second component of the result pair happens when we look up
 --      Foo [a]
 -- in an InstEnv that has entries for
@@ -734,8 +734,8 @@ lookupInstEnv' ie vis_mods cls tys
                 -- They shouldn't because we allocate separate uniques for them
                 -- See Note [Template tyvars are fresh]
         case tcUnifyTys instanceBindFun tpl_tys tys of
-            Just _   -> find ms (item:us) rest
-            Nothing  -> find ms us        rest
+            Just subst -> find ms ((item, map (lookupTyVar subst) tpl_tvs):us) rest
+            Nothing    -> find ms us        rest
       where
         tpl_tv_set = mkVarSet tpl_tvs
 

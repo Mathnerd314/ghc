@@ -2090,7 +2090,7 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
           = ppWhen (not (null unifiers) && want_potential orig) $
             sdocWithDynFlags $ \dflags ->
             getPprStyle $ \sty ->
-            pprPotentials dflags sty potential_hdr unifiers
+            pprPotentials dflags sty potential_hdr (map fst unifiers)
 
         potential_hdr
           = vcat [ ppWhen lead_with_ambig $
@@ -2147,7 +2147,7 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
              ,  sdocWithDynFlags $ \dflags ->
                 getPprStyle $ \sty ->
                 pprPotentials dflags sty (text "Matching instances:") $
-                ispecs ++ unifiers
+                ispecs ++ (map fst unifiers)
 
              ,  ppWhen (null matching_givens && isSingleton matches && null unifiers) $
                 -- Intuitively, some given matched the wanted in their
