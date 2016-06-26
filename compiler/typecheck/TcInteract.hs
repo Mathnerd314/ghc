@@ -1283,7 +1283,8 @@ doTopReact :: WorkItem -> TcS (StopOrContinue Ct)
 --
 --   (a) The place to add superclasses in not here in doTopReact stage.
 --       Instead superclasses are added in the worklist as part of the
---       canonicalization process. See Note [Adding superclasses].
+--       canonicalization process. See Note [The Superclass Story]
+--       in TcCanonical.
 
 doTopReact work_item
   = do { traceTcS "doTopReact" (ppr work_item)
@@ -1309,7 +1310,8 @@ doTopReactDict inerts work_item@(CDictCan { cc_ev = fl, cc_class = cls
 
   | isDerived fl  -- Use type-class instances for Deriveds, in the hope
                   -- of generating some improvements
-                  -- C.f. Example 3 of Note [The improvement story]
+                  -- C.f. Example 3 of Note [Examples of how the inert_model helps completeness]
+                  -- in TcSMonad
                   -- It's easy because no evidence is involved
    = do { dflags <- getDynFlags
         ; lkup_inst_res <- matchClassInst dflags inerts cls xis dict_loc
@@ -1819,7 +1821,7 @@ Example, from the OutsideIn(X) paper:
        g :: forall a. Q [a] => [a] -> Int
        g x = wob x
 
-From 'g' we get the impliation constraint:
+From 'g' we get the implication constraint:
             forall a. Q [a] => (Q [beta], R beta [a])
 If we react (Q [beta]) with its top-level axiom, we end up with a
 (P beta), which we have no way of discharging. On the other hand,
@@ -1899,16 +1901,16 @@ matchInstEnv dflags clas tys loc
         ; let safeOverlapCheck = safeHaskell dflags `elem` [Sf_Safe, Sf_Trustworthy]
               (matches, unify, unsafeOverlaps) = lookupInstEnv True instEnvs clas tys
               safeHaskFail = safeOverlapCheck && not (null unsafeOverlaps)
-        ; case (matches, unify, safeHaskFail) of
+        ; case (matches ++ unify, safeHaskFail) of
 
             -- Nothing matches
-            ([], _, _)
+            ([], _)
                 -> do { traceTcS "matchClass not matching" $
                         vcat [ text "dict" <+> ppr pred ]
                       ; return NoInstance }
 
             -- A single match (& no safe haskell failure)
-            ([(ispec, inst_tys)], [], False)
+            ([(ispec, inst_tys)], False)
                 -> do   { let dfun_id = instanceDFunId ispec
                         ; traceTcS "matchClass success" $
                           vcat [text "dict" <+> ppr pred,
@@ -1919,7 +1921,7 @@ matchInstEnv dflags clas tys loc
 
             -- More than one matches (or Safe Haskell fail!). Defer any
             -- reactions of a multitude until we learn more about the reagent
-            (matches, _, _)
+            (matches, _)
                 -> do   { traceTcS "matchClass multiple matches, deferring choice" $
                           vcat [text "dict" <+> ppr pred,
                                 text "matches" <+> ppr matches]

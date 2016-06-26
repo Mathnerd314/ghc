@@ -394,8 +394,8 @@ dictionary to the inert_solved_dicts.  In general, we use it to avoid
 creating a new EvVar when we have a new goal that we have solved in
 the past.
 
-But in particular, we can use it to create *recursive* dicationaries.
-The simplest, degnerate case is
+But in particular, we can use it to create *recursive* dictionaries.
+The simplest, degenerate case is
     instance C [a] => C [a] where ...
 If we have
     [W] d1 :: C [x]
