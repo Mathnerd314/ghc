@@ -638,7 +638,7 @@ type DFunInstType = Maybe Type
         -- Nothing   => Instantiate with any type of this tyvar's kind
         -- See Note [DFunInstType: instantiating types]
 
-type InstMatch = (ClsInst, [DFunInstType])
+type InstMatch = (ClsInst, TCvSubst)
 
 type ClsInstLookupResult
      = ( [InstMatch]     -- Successful matches
@@ -670,11 +670,12 @@ lookupUniqueInstEnv :: InstEnvs
                     -> Either MsgDoc (ClsInst, [Type])
 lookupUniqueInstEnv instEnv cls tys
   = case lookupInstEnv False instEnv cls tys of
-      ([(inst, inst_tys)], _, _)
+      ([(inst, subst)], _, _)
              | noFlexiVar -> Right (inst, inst_tys')
              | otherwise  -> Left $ text "flexible type variable:" <+>
                                     (ppr $ mkTyConApp (classTyCon cls) tys)
              where
+               inst_tys = map (lookupTyVar subst) (is_tvs inst)
                inst_tys'  = [ty | Just ty <- inst_tys]
                noFlexiVar = all isJust inst_tys
       _other -> Left $ text "instance not found" <+>
@@ -718,7 +719,7 @@ lookupInstEnv' ie vis_mods cls tys
       = find ms us rest
 
       | Just subst <- tcMatchTys tpl_tys tys
-      = find ((item, map (lookupTyVar subst) tpl_tvs) : ms) us rest
+      = find ((item, subst) : ms) us rest
 
         -- Does not match, so next check whether the things unify
         -- See Note [Overlapping instances] and Note [Incoherent instances]
@@ -734,7 +735,7 @@ lookupInstEnv' ie vis_mods cls tys
                 -- They shouldn't because we allocate separate uniques for them
                 -- See Note [Template tyvars are fresh]
         case tcUnifyTys instanceBindFun tpl_tys tys of
-            Just subst -> find ms ((item, map (lookupTyVar subst) tpl_tvs):us) rest
+            Just subst -> find ms ((item, subst):us) rest
             Nothing    -> find ms us        rest
       where
         tpl_tv_set = mkVarSet tpl_tvs

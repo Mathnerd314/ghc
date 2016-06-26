@@ -15,7 +15,7 @@ import TcCanonical
 import TcFlatten
 import VarSet
 import Type
-import InstEnv( DFunInstType, lookupInstEnv, instanceDFunId )
+import InstEnv( ClsInst(..), DFunInstType, lookupInstEnv, instanceDFunId )
 import CoAxiom( sfInteractTop, sfInteractInert )
 
 import Var
@@ -1910,14 +1910,7 @@ matchInstEnv dflags clas tys loc
                       ; return NoInstance }
 
             -- A single match (& no safe haskell failure)
-            ([(ispec, inst_tys)], False)
-                -> do   { let dfun_id = instanceDFunId ispec
-                        ; traceTcS "matchClass success" $
-                          vcat [text "dict" <+> ppr pred,
-                                text "witness" <+> ppr dfun_id
-                                               <+> ppr (idType dfun_id) ]
-                                  -- Record that this dfun is needed
-                        ; match_one (null unsafeOverlaps) dfun_id inst_tys }
+            ([(ispec, subst)], False) -> match_one (null unsafeOverlaps) ispec subst
 
             -- More than one matches (or Safe Haskell fail!). Defer any
             -- reactions of a multitude until we learn more about the reagent
@@ -1929,15 +1922,26 @@ matchInstEnv dflags clas tys loc
    where
      pred = mkClassPred clas tys
 
-     match_one :: SafeOverlapping -> DFunId -> [DFunInstType] -> TcS LookupInstResult
+     match_one :: SafeOverlapping -> ClsInst -> TCvSubst -> TcS LookupInstResult
                   -- See Note [DFunInstType: instantiating types] in InstEnv
-     match_one so dfun_id mb_inst_tys
-       = do { checkWellStagedDFun pred dfun_id loc
+     match_one so ispec subst
+       = do { let dfun_id = instanceDFunId ispec
+            ; let mb_inst_tys = map (lookupTyVar subst) (is_tvs ispec)
+            ; checkWellStagedDFun pred dfun_id loc
             ; (tys, theta) <- instDFunType dfun_id mb_inst_tys
+            ; traceTcS "matchClass success" $
+              vcat [text "dict" <+> ppr pred
+                   ,text "witness" <+> ppr dfun_id
+                                    <+> ppr (idType dfun_id)
+                   ,text "ispec" <+> ppr ispec
+                   ,text "subst" <+> ppr subst
+                   ,text "theta" <+> ppr theta
+                   ,text "tys" <+> ppr tys
+                   ,text "so" <+> ppr so]
+              -- Record that this dfun is needed
             ; return $ GenInst { lir_new_theta = theta
                                , lir_mk_ev     = EvDFunApp dfun_id tys
                                , lir_safe_over = so } }
-
 
 {- ********************************************************************
 *                                                                     *
