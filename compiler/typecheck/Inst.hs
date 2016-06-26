@@ -717,7 +717,7 @@ addLocalInst (home_ie, my_insts) ispec
 
              -- Check for duplicate instance decls.
          ; let (_tvs, cls, tys) = instanceHead ispec
-               (matches, _, _)  = lookupInstEnv False inst_envs cls tys
+               (matches, _, _)  = lookupInstEnv True False inst_envs cls tys
                dups             = filter (identicalClsInstHead ispec) (map fst matches)
          ; unless (null dups) $
            dupInstErr ispec (head dups)

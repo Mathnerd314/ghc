@@ -1965,9 +1965,10 @@ mkDictErr :: ReportErrCtxt -> [Ct] -> TcM ErrMsg
 mkDictErr ctxt cts
   = ASSERT( not (null cts) )
     do { inst_envs <- tcGetInstEnvs
+       ; show_potentials <- gopt Opt_PrintPotentialInstances <$> getDynFlags
        ; let (ct1:_) = cts  -- ct1 just for its location
              min_cts = elim_superclasses cts
-             lookups = map (lookup_cls_inst inst_envs) min_cts
+             lookups = map (lookup_cls_inst show_potentials inst_envs) min_cts
              (no_inst_cts, overlap_cts) = partition is_no_inst lookups
 
        -- Report definite no-instance errors,
@@ -1985,9 +1986,9 @@ mkDictErr ctxt cts
       && null matches
       && (null unifiers || all (not . isAmbiguousTyVar) (tyCoVarsOfCtList ct))
 
-    lookup_cls_inst inst_envs ct
+    lookup_cls_inst show_potentials inst_envs ct
                 -- Note [Flattening in error message generation]
-      = (ct, lookupInstEnv True inst_envs clas (flattenTys emptyInScopeSet tys))
+      = (ct, lookupInstEnv show_potentials True inst_envs clas (flattenTys emptyInScopeSet tys))
       where
         (clas, tys) = getClassPredTys (ctPred ct)
 

@@ -1899,7 +1899,7 @@ matchInstEnv :: DynFlags -> Class -> [Type] -> CtLoc -> TcS LookupInstResult
 matchInstEnv dflags clas tys loc
    = do { instEnvs <- getInstEnvs
         ; let safeOverlapCheck = safeHaskell dflags `elem` [Sf_Safe, Sf_Trustworthy]
-              (matches, unify, unsafeOverlaps) = lookupInstEnv True instEnvs clas tys
+              (matches, unify, unsafeOverlaps) = lookupInstEnv False True instEnvs clas tys
               safeHaskFail = safeOverlapCheck && not (null unsafeOverlaps)
         ; case (matches ++ unify, safeHaskFail) of
 

@@ -7,7 +7,7 @@
 The bits common to TcInstDcls and TcDeriv.
 -}
 
-{-# LANGUAGE CPP, DeriveDataTypeable #-}
+{-# LANGUAGE CPP, DeriveDataTypeable, ScopedTypeVariables #-}
 
 module InstEnv (
         DFunId, InstMatch, ClsInstLookupResult,
@@ -669,7 +669,7 @@ lookupUniqueInstEnv :: InstEnvs
                     -> Class -> [Type]
                     -> Either MsgDoc (ClsInst, [Type])
 lookupUniqueInstEnv instEnv cls tys
-  = case lookupInstEnv False instEnv cls tys of
+  = case lookupInstEnv False False instEnv cls tys of
       ([(inst, subst)], _, _)
              | noFlexiVar -> Right (inst, inst_tys')
              | otherwise  -> Left $ text "flexible type variable:" <+>
@@ -681,7 +681,8 @@ lookupUniqueInstEnv instEnv cls tys
       _other -> Left $ text "instance not found" <+>
                        (ppr $ mkTyConApp (classTyCon cls) tys)
 
-lookupInstEnv' :: InstEnv          -- InstEnv to look in
+lookupInstEnv' :: Maybe Int -- maximum number of matching instances to return
+               -> InstEnv          -- InstEnv to look in
                -> VisibleOrphanModules   -- But filter against this
                -> Class -> [Type]  -- What we are looking for
                -> ([InstMatch],    -- Successful matches
@@ -696,7 +697,7 @@ lookupInstEnv' :: InstEnv          -- InstEnv to look in
 -- but Foo [Int] is a unifier.  This gives the caller a better chance of
 -- giving a suitable error message
 
-lookupInstEnv' ie vis_mods cls tys
+lookupInstEnv' max_ret ie vis_mods cls tys
   = lookup ie
   where
     rough_tcs  = roughMatchTcs tys
@@ -705,26 +706,27 @@ lookupInstEnv' ie vis_mods cls tys
     --------------
     lookup env = case lookupUFM env cls of
                    Nothing -> ([],[])   -- No instances for this class
-                   Just (ClsIE insts) -> find [] [] insts
+                   Just (ClsIE insts) -> find max_ret [] [] insts
 
     --------------
-    find ms us [] = (ms, us)
-    find ms us (item@(ClsInst { is_tcs = mb_tcs, is_tvs = tpl_tvs
-                              , is_tys = tpl_tys }) : rest)
+    find _ ms us [] = (ms, us)
+    find (Just (0 :: Int)) ms us _ = (ms, us)
+    find m ms us (item@(ClsInst { is_tcs = mb_tcs, is_tvs = tpl_tvs
+                                , is_tys = tpl_tys }) : rest)
       | not (instIsVisible vis_mods item)
-      = find ms us rest  -- See Note [Instance lookup and orphan instances]
+      = find m ms us rest  -- See Note [Instance lookup and orphan instances]
 
         -- Fast check for no match, uses the "rough match" fields
       | instanceCantMatch rough_tcs mb_tcs
-      = find ms us rest
+      = find m ms us rest
 
       | Just subst <- tcMatchTys tpl_tys tys
-      = find ((item, subst) : ms) us rest
+      = find m' ((item, subst) : ms) us rest
 
         -- Does not match, so next check whether the things unify
         -- See Note [Overlapping instances] and Note [Incoherent instances]
       | isIncoherent item
-      = find ms us rest
+      = find m ms us rest
 
       | otherwise
       = ASSERT2( tyCoVarsOfTypes tys `disjointVarSet` tpl_tv_set,
@@ -735,21 +737,23 @@ lookupInstEnv' ie vis_mods cls tys
                 -- They shouldn't because we allocate separate uniques for them
                 -- See Note [Template tyvars are fresh]
         case tcUnifyTys instanceBindFun tpl_tys tys of
-            Just subst -> find ms ((item, subst):us) rest
-            Nothing    -> find ms us        rest
+            Just subst -> find m' ms ((item, subst):us) rest
+            Nothing    -> find m  ms us        rest
       where
         tpl_tv_set = mkVarSet tpl_tvs
+        m' = fmap (\x -> x-1) m
 
 ---------------
 -- This is the common way to call this function.
-lookupInstEnv :: Bool              -- Check Safe Haskell overlap restrictions
+lookupInstEnv :: Bool              -- Return all potential instances
+              -> Bool              -- Check Safe Haskell overlap restrictions
               -> InstEnvs          -- External and home package inst-env
               -> Class -> [Type]   -- What we are looking for
               -> ClsInstLookupResult
 -- ^ See Note [Rules for instance lookup]
 -- ^ See Note [Safe Haskell Overlapping Instances] in TcSimplify
 -- ^ See Note [Safe Haskell Overlapping Instances Implementation] in TcSimplify
-lookupInstEnv check_overlap_safe
+lookupInstEnv show_potentials check_overlap_safe
               (InstEnvs { ie_global = pkg_ie
                         , ie_local = home_ie
                         , ie_visible = vis_mods })
@@ -758,8 +762,10 @@ lookupInstEnv check_overlap_safe
   = -- pprTrace "lookupInstEnv" (ppr cls <+> ppr tys $$ ppr home_ie) $
     (final_matches, final_unifs, unsafe_overlapped)
   where
-    (home_matches, home_unifs) = lookupInstEnv' home_ie vis_mods cls tys
-    (pkg_matches,  pkg_unifs)  = lookupInstEnv' pkg_ie  vis_mods cls tys
+    max_ret = if show_potentials then Nothing else Just 3
+
+    (home_matches, home_unifs) = lookupInstEnv' max_ret home_ie vis_mods cls tys
+    (pkg_matches,  pkg_unifs)  = lookupInstEnv' max_ret pkg_ie  vis_mods cls tys
     all_matches = home_matches ++ pkg_matches
     all_unifs   = home_unifs   ++ pkg_unifs
     final_matches = foldr insert_overlapping [] all_matches

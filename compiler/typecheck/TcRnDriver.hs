@@ -1389,7 +1389,7 @@ tcMissingParentClassWarn warnFlag isName shouldName
     checkShouldInst isClass shouldClass isInst
       = do { instEnv <- tcGetInstEnvs
            ; let (instanceMatches, shouldInsts, _)
-                    = lookupInstEnv False instEnv shouldClass (is_tys isInst)
+                    = lookupInstEnv False False instEnv shouldClass (is_tys isInst)
 
            ; traceTc "tcMissingParentClassWarn/checkShouldInst"
                      (hang (ppr isInst) 4
