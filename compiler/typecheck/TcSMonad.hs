@@ -36,7 +36,7 @@ module TcSMonad (
     setEvBind, setWantedEq, setEqIfWanted,
     setWantedEvTerm, setWantedEvBind, setEvBindIfWanted,
     newEvVar, newGivenEvVar, newGivenEvVars,
-    emitNewDerived, emitNewDeriveds, emitNewDerivedEq,
+    emitNewDerived, emitNewDeriveds,
     checkReductionDepth,
 
     getInstEnvs, getFamInstEnvs,                -- Getting the environments
@@ -3051,14 +3051,6 @@ emitNewDeriveds loc preds
   = do { evs <- mapM (newDerivedNC loc) preds
        ; traceTcS "Emitting new deriveds" (ppr evs)
        ; updWorkListTcS (extendWorkListDeriveds loc evs) }
-
-emitNewDerivedEq :: CtLoc -> Role -> TcType -> TcType -> TcS ()
--- Create new equality Derived and put it in the work list
--- There's no caching, no lookupInInerts
-emitNewDerivedEq loc role ty1 ty2
-  = do { ev <- newDerivedNC loc (mkPrimEqPredRole role ty1 ty2)
-       ; traceTcS "Emitting new derived equality" (ppr ev $$ pprCtLoc loc)
-       ; updWorkListTcS (extendWorkListDerived loc ev) }
 
 newDerivedNC :: CtLoc -> TcPredType -> TcS CtEvidence
 newDerivedNC loc pred

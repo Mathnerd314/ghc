@@ -187,7 +187,7 @@ type UnboundTyVarZonker = TcTyVar -> TcM Type
         -- Note [Zonking the LHS of a RULE]
 
 -- | A ZonkEnv carries around several bits.
--- The UnboundTyVarZonker just zaps unbouned meta-tyvars to Any (as
+-- The UnboundTyVarZonker just zaps unbound meta-tyvars to Any (as
 -- defined in zonkTypeZapping), except on the LHS of rules. See
 -- Note [Zonking the LHS of a RULE].
 --
