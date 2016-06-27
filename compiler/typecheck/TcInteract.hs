@@ -1947,7 +1947,7 @@ matchInstEnv dflags clas tys loc
                    ,text "tys'" <+> ppr tys'
                    ,text "so" <+> ppr so]
             ; -- Unify variables (instance matching produces evidence!)
-              zipWithM_ (\x y -> unifyType noThing x y) tys tys'
+              zipWithM_ (\x y -> unifyDerived loc Nominal (Pair x y)) tys tys'
             ; -- Record that this dfun is needed
               return $ GenInst { lir_new_theta = new_theta
                                , lir_mk_ev     = EvDFunApp dfun_id inst_tvs
