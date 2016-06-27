@@ -17,6 +17,8 @@ module TcSMonad (
     failTcS, warnTcS, addErrTcS,
     runTcSEqualities,
     nestTcS, nestImplicTcS,
+    -- hack
+    wrapTcS,
 
     runTcPluginTcS, addUsedGREs, deferTcSForAllEq,
 
@@ -108,6 +110,8 @@ module TcSMonad (
                                              -- instance matcher in TcSimplify. I am wondering
                                              -- if the whole instance matcher simply belongs
                                              -- here
+, readMetaTyVar, addErrCtxtM, newOpenInferExpType, readExpType, zonkTidyTcType, newMetaTyVars, newMetaKindVar, newFlexiTyVarTy, readExpType_maybe, getErrCtxt, readMutVar, isTouchableTcM, writeMetaTyVarRef
+
 ) where
 
 #include "HsVersions.h"
@@ -3128,3 +3132,25 @@ deferTcSForAllEq role loc kind_cos (bndrs1,body1) (bndrs2,body2)
    where
      tvs1 = binderVars bndrs1
      tvs2 = binderVars bndrs2
+
+readMetaTyVar ref = wrapTcS $ TcM.readMetaTyVar ref
+addErrCtxtM a b = TcS $ \e -> TcM.addErrCtxtM (\t -> unTcS (a t) e) (unTcS b e)
+newOpenInferExpType = wrapTcS TcM.newOpenInferExpType
+readExpType a = wrapTcS $ TcM.readExpType a
+zonkTidyTcType a b = wrapTcS $ TcM.zonkTidyTcType a b
+newMetaTyVars x = wrapTcS $ TcM.newMetaTyVars x
+newMetaKindVar = wrapTcS $ TcM.newMetaKindVar
+newFlexiTyVarTy x = wrapTcS $ TcM.newFlexiTyVarTy x
+newOpenFlexiTyVarTy = wrapTcS newOpenFlexiTyVarTy
+newSysLocalIds x y = wrapTcS $ TcM.newSysLocalIds x y
+readExpType_maybe x = wrapTcS $ TcM.readExpType_maybe x
+getErrCtxt = wrapTcS $ TcM.getErrCtxt
+readMutVar x = wrapTcS $ TcM.readMutVar x
+isTouchableTcM x = wrapTcS $ TcM.isTouchableTcM x
+goptM x = wrapTcS $ TcM.goptM x
+checkTc x y = wrapTcS $ TcM.checkTc x y
+writeMetaTyVarRef tv ref1 ty
+  = ASSERT2( isMetaTyVar tv, ppr tv )
+    TcS $ \ env ->
+    do { TcM.writeMetaTyVarRef tv ref1 ty
+       ; TcM.updTcRef (tcs_unified env) (+1) }

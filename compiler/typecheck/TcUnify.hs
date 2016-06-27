@@ -38,8 +38,11 @@ module TcUnify (
 
 import HsSyn
 import TyCoRep
-import TcMType
-import TcRnMonad
+import qualified TcMType as TcM
+import qualified TcRnMonad as TcM
+import TcMType (checkingExpType_maybe, checkingExpType, mkTypeErrorThingArgs)
+import TcSMonad
+import TcRnTypes hiding (TcM)
 import TcType
 import Type
 import Coercion
@@ -62,6 +65,9 @@ import FastString
 
 import Control.Monad
 import Control.Arrow ( second )
+
+type TcM = TcS
+traceTc = traceTcS
 
 {-
 ************************************************************************

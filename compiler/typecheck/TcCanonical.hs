@@ -1976,31 +1976,19 @@ unify_derived loc role    orig_ty1 orig_ty2
       = do { mb_ty <- isFilledMetaTyVar_maybe tv
            ; case mb_ty of
                 Just ty1' -> go ty1' ty2
-                Nothing -> try_fill tv ty2 }
+                Nothing -> bale_out }
     go ty1 (TyVarTy tv)
       = do { mb_ty <- isFilledMetaTyVar_maybe tv
            ; case mb_ty of
                 Just ty2' -> go ty1 ty2'
-                Nothing -> try_fill tv ty1 }
+                Nothing -> bale_out }
     go _ _ = bale_out
 
     pred = mkPrimEqPredRole role orig_ty1 orig_ty2
     ev = CtDerived { ctev_pred = pred, ctev_loc = loc }
 
-    -- Try to fill metavariables, otherwise bail
-    try_fill tv ty = do
-      dflags <- getDynFlags
-      tclvl  <- getTcLevel
-      filled <-
-        if isMetaTyVar tv
-              && isTouchableOrFmv tclvl tv
-              && typeKind ty `eqType` tyVarKind tv
-          then tryFill dflags tv ty ev
-          else return False
-      when (not filled) bale_out
-
     -- Create new equality Derived and put it in the work list
-    -- There's no caching, no lookupInInerts
+    -- There's no caching, no lookupInInerts (use TcUnify instead)
     bale_out = do
       traceTcS "Emitting new derived equality" (ppr ev $$ pprCtLoc loc)
       updWorkListTcS (extendWorkListDerived loc ev)
