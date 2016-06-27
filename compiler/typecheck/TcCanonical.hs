@@ -1971,6 +1971,7 @@ unify_derived loc role    orig_ty1 orig_ty2
       | tc1 == tc2, tys1 `equalLength` tys2
       , isInjectiveTyCon tc1 role
       = unifyDeriveds loc (tyConRolesX role tc1) tys1 tys2
+    go (TyVarTy tv) (TyVarTy tv2) | tv == tv2 = return ()
     go (TyVarTy tv) ty2
       = do { mb_ty <- isFilledMetaTyVar_maybe tv
            ; case mb_ty of

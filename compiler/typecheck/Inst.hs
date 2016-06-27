@@ -307,28 +307,17 @@ instCallConstraints orig preds
      | otherwise
      = emitWanted orig pred
 
-instDFunType :: DFunId -> [DFunInstType]
-             -> TcM ( [TcType]      -- instantiated argument types
-                    , TcThetaType ) -- instantiated constraint
+instDFunType :: TCvSubst -> [TyVar]
+             -> TcM ( TCvSubst      -- substitution with fresh variables
+                    , [TcType] )    -- instantiated argument types
 -- See Note [DFunInstType: instantiating types] in InstEnv
-instDFunType dfun_id dfun_inst_tys
-  = do { (subst, inst_tys) <- go emptyTCvSubst dfun_tvs dfun_inst_tys
-       ; return (inst_tys, substTheta subst dfun_theta) }
+instDFunType subst tvs = mapAccumLM go subst tvs
   where
-    (dfun_tvs, dfun_theta, _) = tcSplitSigmaTy (idType dfun_id)
-
-    go :: TCvSubst -> [TyVar] -> [DFunInstType] -> TcM (TCvSubst, [TcType])
-    go subst [] [] = return (subst, [])
-    go subst (tv:tvs) (Just ty : mb_tys)
-      = do { (subst', tys) <- go (extendTvSubstAndInScope subst tv ty)
-                                 tvs
-                                 mb_tys
-           ; return (subst', ty : tys) }
-    go subst (tv:tvs) (Nothing : mb_tys)
-      = do { (subst', tv') <- newMetaTyVarX subst tv
-           ; (subst'', tys) <- go subst' tvs mb_tys
-           ; return (subst'', mkTyVarTy tv' : tys) }
-    go _ _ _ = pprPanic "instDFunTypes" (ppr dfun_id $$ ppr dfun_inst_tys)
+    go :: TCvSubst -> TyVar -> TcM (TCvSubst, TcType)
+    go subst tv = case lookupTyVar subst tv of
+            Just ty -> return (subst, ty)
+            Nothing -> do { (subst', tv') <- newMetaTyVarX subst tv
+                          ; return (subst', mkTyVarTy tv') }
 
 ----------------
 instStupidTheta :: CtOrigin -> TcThetaType -> TcM ()

@@ -2877,9 +2877,11 @@ extendFlatCache tc xi_args stuff
 -- Instantiations
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-instDFunType :: DFunId -> [DFunInstType] -> TcS ([TcType], TcThetaType)
-instDFunType dfun_id inst_tys
-  = wrapTcS $ TcM.instDFunType dfun_id inst_tys
+instDFunType :: TCvSubst -> [TyVar]
+             -> TcS ( TCvSubst      -- substitution with fresh variables
+                    , [TcType] )    -- instantiated argument types
+instDFunType subst tyv
+  = wrapTcS $ TcM.instDFunType subst tyv
 
 newFlexiTcSTy :: Kind -> TcS TcType
 newFlexiTcSTy knd = wrapTcS (TcM.newFlexiTyVarTy knd)

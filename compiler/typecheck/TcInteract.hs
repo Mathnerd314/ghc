@@ -1924,11 +1924,18 @@ matchInstEnv dflags clas tys loc
 
      match_one :: SafeOverlapping -> ClsInst -> TCvSubst -> TcS LookupInstResult
                   -- See Note [DFunInstType: instantiating types] in InstEnv
-     match_one so ispec subst
+     match_one so ispec tsubst
        = do { let dfun_id = instanceDFunId ispec
-            ; let mb_inst_tys = map (lookupTyVar subst) (is_tvs ispec)
             ; checkWellStagedDFun pred dfun_id loc
-            ; (tys, theta) <- instDFunType dfun_id mb_inst_tys
+            ; let (tvs, theta, _, tys_t) = tcSplitDFunTy (idType dfun_id)
+            -- build a substitution that uses fresh variables for tvs from the template
+            ; (subst, tvs') <- instDFunType tsubst tvs
+            -- tvs contains all free variables of theta, because instances are top-level
+            ; let new_theta = substTheta subst theta
+                  -- substitute the type variables in the type instances
+                  inst_tvs = substTys subst tvs'
+                  -- substitute the type variables in the class arguments
+                  tys' = substTys subst tys_t
             ; traceTcS "matchClass success" $
               vcat [text "dict" <+> ppr pred
                    ,text "witness" <+> ppr dfun_id
@@ -1938,9 +1945,11 @@ matchInstEnv dflags clas tys loc
                    ,text "theta" <+> ppr theta
                    ,text "tys" <+> ppr tys
                    ,text "so" <+> ppr so]
-              -- Record that this dfun is needed
-            ; return $ GenInst { lir_new_theta = theta
-                               , lir_mk_ev     = EvDFunApp dfun_id tys
+            ; -- Unify variables (instance matching produces evidence!)
+              unifyDeriveds loc (map (const Nominal) tys) tys tys'
+            ; -- Record that this dfun is needed
+              return $ GenInst { lir_new_theta = new_theta
+                               , lir_mk_ev     = EvDFunApp dfun_id inst_tvs
                                , lir_safe_over = so } }
 
 {- ********************************************************************
