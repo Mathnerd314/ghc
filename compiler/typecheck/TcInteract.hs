@@ -1927,7 +1927,7 @@ matchInstEnv dflags clas tys loc
      match_one so ispec tsubst
        = do { let dfun_id = instanceDFunId ispec
             ; checkWellStagedDFun pred dfun_id loc
-            ; let (tvs, theta, _, _) = tcSplitDFunTy (idType dfun_id)
+            ; let (tvs, theta, _, tys_t) = tcSplitDFunTy (idType dfun_id)
             -- build a substitution that uses fresh variables for tvs from the template
             ; (subst, tvs') <- instDFunType tsubst tvs
             -- tvs contains all free variables of theta, because instances are top-level
@@ -1935,7 +1935,7 @@ matchInstEnv dflags clas tys loc
                   -- substitute the type variables in the type instances
                   inst_tvs = substTys subst tvs'
                   -- substitute the type variables in the class arguments
-                  tys' = substTys subst (is_tys ispec)
+                  tys' = substTys subst tys_t
             ; traceTcS "matchClass success" $
               vcat [text "dict" <+> ppr pred
                    ,text "witness" <+> ppr dfun_id
@@ -1944,10 +1944,9 @@ matchInstEnv dflags clas tys loc
                    ,text "subst" <+> ppr subst
                    ,text "theta" <+> ppr theta
                    ,text "tys" <+> ppr tys
-                   ,text "tys'" <+> ppr tys'
                    ,text "so" <+> ppr so]
             ; -- Unify variables (instance matching produces evidence!)
-              zipWithM_ (\x y -> unifyDerived loc Nominal (Pair x y)) tys tys'
+              unifyDeriveds loc (map (const Nominal) tys) tys tys'
             ; -- Record that this dfun is needed
               return $ GenInst { lir_new_theta = new_theta
                                , lir_mk_ev     = EvDFunApp dfun_id inst_tvs

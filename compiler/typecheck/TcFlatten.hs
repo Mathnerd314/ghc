@@ -3,8 +3,8 @@
 module TcFlatten(
    FlattenMode(..),
    flatten, flattenManyNom,
+
    unflatten,
-   tryFill
  ) where
 
 #include "HsVersions.h"
@@ -1552,7 +1552,7 @@ unflatten tv_eqs funeqs
 tryFill :: DynFlags -> TcTyVar -> TcType -> CtEvidence -> TcS Bool
 -- (tryFill tv rhs ev) sees if 'tv' is an un-filled MetaTv
 -- If so, and if tv does not appear in 'rhs', set tv := rhs
--- bind the evidence (if CtWanted) to Refl<rhs>
+-- bind the evidence (which should be a CtWanted) to Refl<rhs>
 -- and return True.  Otherwise return False
 tryFill dflags tv rhs ev
   = ASSERT2( not (isGiven ev), ppr ev )

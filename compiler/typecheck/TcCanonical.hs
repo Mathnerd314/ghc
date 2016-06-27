@@ -1976,28 +1976,15 @@ unify_derived loc role    orig_ty1 orig_ty2
       = do { mb_ty <- isFilledMetaTyVar_maybe tv
            ; case mb_ty of
                 Just ty1' -> go ty1' ty2
-                Nothing   -> do
-                    dflags <- getDynFlags
-                    filled <- tryFill dflags tv ty2 ev
-                    when (not filled) bale_out }
+                Nothing   -> bale_out }
     go ty1 (TyVarTy tv)
       = do { mb_ty <- isFilledMetaTyVar_maybe tv
            ; case mb_ty of
                 Just ty2' -> go ty1 ty2'
-                Nothing   -> do
-                    dflags <- getDynFlags
-                    filled <- tryFill dflags tv ty1 ev
-                    when (not filled) bale_out }
+                Nothing   -> bale_out }
     go _ _ = bale_out
 
-    pred = mkPrimEqPredRole role orig_ty1 orig_ty2
-    ev = CtDerived { ctev_pred = pred, ctev_loc = loc }
-    -- Create new equality Derived and put it in the work list
-    -- There's no caching, no lookupInInerts
-    bale_out = do
-      traceTcS "Emitting new derived equality" (ppr ev $$ pprCtLoc loc)
-      updWorkListTcS (extendWorkListDerived loc ev)
-
+    bale_out = emitNewDerivedEq loc role orig_ty1 orig_ty2
 
 maybeSym :: SwapFlag -> TcCoercion -> TcCoercion
 maybeSym IsSwapped  co = mkTcSymCo co
