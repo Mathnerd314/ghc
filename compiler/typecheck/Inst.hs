@@ -639,6 +639,7 @@ newClsInst overlap_mode dfun_name tvs theta clas tys
   = do { (subst, tvs') <- freshenTyVarBndrs tvs
              -- Be sure to freshen those type variables,
              -- so they are sure not to appear in any lookup
+             -- See Note [Template tyvars are fresh] in InstEnv
        ; let tys'   = substTys subst tys
              theta' = substTheta subst theta
              dfun   = mkDictFunId dfun_name tvs' theta' clas tys'

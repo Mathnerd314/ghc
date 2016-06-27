@@ -410,7 +410,7 @@ constraint solver.  It's not strictly essential, and indeed
 (historically but still there) Var.tcTyVarDetails returns
 vanillaSkolemTv for a TyVar.
 
-But ultimately I want to seeparate Type from TcType, and in that case
+But ultimately I want to separate Type from TcType, and in that case
 we would need to enforce the separation.
 -}
 

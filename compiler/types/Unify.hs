@@ -509,7 +509,7 @@ see Note [Non-trivial definitional equality] in TyCoRep
 
 Unlike the "impure unifers" in the typechecker (the eager unifier in
 TcUnify, and the constraint solver itself in TcCanonical), the pure
-unifier It does /not/ work up to ~.
+unifier does /not/ work up to ~.
 
 The algorithm implemented here is rather delicate, and we depend on it
 to uphold certain properties. This is a summary of these required

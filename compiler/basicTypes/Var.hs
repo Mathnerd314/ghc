@@ -176,9 +176,9 @@ data Var
         varType    :: Kind           -- ^ The type or kind of the 'Var' in question
  }
 
-  | TcTyVar {                           -- Used only during type inference
-                                        -- Used for kind variables during
-                                        -- inference, as well
+  | TcTyVar { -- Used only during type inference
+              -- See Note [TyVars and TcTyVars during type checking] in TcType
+              -- Used for kind variables during inference, as well
         varName        :: !Name,
         realUnique     :: {-# UNPACK #-} !Int,
         varType        :: Kind,

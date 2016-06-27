@@ -1932,7 +1932,7 @@ matchInstEnv dflags clas tys loc
             ; traceTcS "matchClass success" $
               vcat [text "dict" <+> ppr pred
                    ,text "witness" <+> ppr dfun_id
-                                    <+> ppr (idType dfun_id)
+                   ,text "idtype" <+> ppr (idType dfun_id)
                    ,text "ispec" <+> ppr ispec
                    ,text "subst" <+> ppr subst
                    ,text "theta" <+> ppr theta
