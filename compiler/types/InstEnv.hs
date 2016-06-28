@@ -135,11 +135,11 @@ that we don't need to decompose the DFunId each time we want
 to match it.  The hope is that the fast-match fields mean
 that we often never poke the proper-match fields.
 
-However, note that:
+Note that:
  * is_tvs must be a superset of the free vars of is_tys
-
- * is_tvs, is_tys may be alpha-renamed compared to the ones in
-   the dfun Id
+ * is_tvs must also be a superset of the free vars of theta
+ * is_tvs must not be alpha-renamed from the dfunid,
+   because it is used to substitute theta
 
 Note [Haddock assumptions]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -433,7 +433,7 @@ identicalClsInstHead (ClsInst { is_cls_nm = cls_nm1, is_tcs = rough1, is_tys = t
 *                                                                      *
 ************************************************************************
 
-@lookupInstEnv@ looks up in a @InstEnv@, using a one-way match.  Since
+@lookupInstEnv@ looks up in a @InstEnv@, using unification.  Since
 the env is kept ordered, the first match must be the only one.  The
 thing we are looking up can have an arbitrary "flexi" part.
 
@@ -650,16 +650,32 @@ type ClsInstLookupResult
 {-
 Note [DFunInstType: instantiating types]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-A successful match is a ClsInst, together with the types at which
-        the dfun_id in the ClsInst should be instantiated
-The instantiating types are (Either TyVar Type)s because the dfun
-might have some tyvars that *only* appear in arguments
+A successful match is a ClsInst, together with a template substitution.
         dfun :: forall a b. C a b, Ord b => D [a]
-When we match this against D [ty], we return the instantiating types
-        [Just ty, Nothing]
-where the 'Nothing' indicates that 'b' can be freely instantiated.
-(The caller instantiates it to a flexi type variable, which will
- presumably later become fixed via functional dependencies.)
+When we match this against D [ty], we return the substitution
+        [a -> ty]
+where absence of 'b' indicates that it can be freely instantiated.
+
+The caller thus needs to know that 'b' is unbound, and create a fresh variable.
+
+Similarly, solving:
+    class A x y
+    instance forall b c. A b [c]
+    foo :: (A [a] a) => (a,a)
+we get:
+    b -> [[c]], a -> [c]
+Then c has to be replaced with a fresh d (a flexi type variable,
+which can be fixed later by fundeps etc.):
+    b -> [[d]], a -> [d]
+It is assumed that the caller does this, if it uses the substitution.
+
+Finally, for this:
+    class A x y z
+    instance forall b c. A b [c] c
+    foo :: (A [a] a [d]) => (a,d)
+we get as solution to the unification:
+    a -> [[d]], b -> [[[d]]], c -> [d]
+This d is assumed to be usable as-is, because it's part of the wanted constraint
 -}
 
 -- |Look up an instance in the given instance environment. The given class application must match exactly
@@ -685,8 +701,7 @@ lookupInstEnv' :: Maybe Int -- maximum number of matching instances to return
                -> InstEnv          -- InstEnv to look in
                -> VisibleOrphanModules   -- But filter against this
                -> Class -> [Type]  -- What we are looking for
-               -> ([InstMatch],    -- Successful matches
-                   [InstMatch])     -- These don't match but do unify
+               -> [InstMatch] -- Successful unifications
 -- The second component of the result pair happens when we look up
 --      Foo [a]
 -- in an InstEnv that has entries for
@@ -720,25 +735,19 @@ lookupInstEnv' max_ret ie vis_mods cls tys
       | instanceCantMatch rough_tcs mb_tcs
       = find m ms us rest
 
-      | Just subst <- tcMatchTys tpl_tys tys
+      | Just subst <- ASSERT2( tyCoVarsOfTypes tys `disjointVarSet` tpl_tv_set,
+                               (ppr cls <+> ppr tys <+> ppr all_tvs) $$
+                               (ppr tpl_tvs <+> ppr tpl_tys)
+                             )
+                      tcUnifyTys instanceBindFun tpl_tys tys
+                      -- Unification will break badly if the variables overlap
+                      -- They shouldn't because we allocate separate uniques for them
+                      -- See Note [Template tyvars are fresh]
       = find m' ((item, subst) : ms) us rest
 
-        -- Does not match, so next check whether the things unify
-        -- See Note [Overlapping instances] and Note [Incoherent instances]
-      | isIncoherent item
-      = find m ms us rest
-
+        -- Does not match
       | otherwise
-      = ASSERT2( tyCoVarsOfTypes tys `disjointVarSet` tpl_tv_set,
-                 (ppr cls <+> ppr tys <+> ppr all_tvs) $$
-                 (ppr tpl_tvs <+> ppr tpl_tys)
-                )
-                -- Unification will break badly if the variables overlap
-                -- They shouldn't because we allocate separate uniques for them
-                -- See Note [Template tyvars are fresh]
-        case tcUnifyTys instanceBindFun tpl_tys tys of
-            Just subst -> find m' ms ((item, subst):us) rest
-            Nothing    -> find m  ms us        rest
+      = find m ms us rest
       where
         tpl_tv_set = mkVarSet tpl_tvs
         m' = fmap (\x -> x-1) m

@@ -1924,33 +1924,51 @@ matchInstEnv dflags clas tys loc
 
      match_one :: SafeOverlapping -> ClsInst -> TCvSubst -> TcS LookupInstResult
                   -- See Note [DFunInstType: instantiating types] in InstEnv
-     match_one so ispec tsubst
+     match_one so ispec templ_subst
        = do { let dfun_id = instanceDFunId ispec
             ; checkWellStagedDFun pred dfun_id loc
-            ; let (tvs, theta, _, tys_t) = tcSplitDFunTy (idType dfun_id)
-            -- build a substitution that uses fresh variables for tvs from the template
-            ; (subst, tvs') <- instDFunType tsubst tvs
-            -- tvs contains all free variables of theta, because instances are top-level
-            ; let new_theta = substTheta subst theta
-                  -- substitute the type variables in the type instances
-                  inst_tvs = substTys subst tvs'
-                  -- substitute the type variables in the class arguments
-                  tys' = substTys subst tys_t
+            ; let (dfun_tvs, dfun_theta, _, _) = tcSplitDFunTy (idType dfun_id)
+            -- build a substitution that replaces all dfun_tvs with fresh variables
+            -- or types
+            ; subst <- instDFunType templ_subst dfun_tvs
+            ; let theta = substTheta subst dfun_theta
+                  tvs = substTyVars subst dfun_tvs
             ; traceTcS "matchClass success" $
               vcat [text "dict" <+> ppr pred
                    ,text "witness" <+> ppr dfun_id
                    ,text "idtype" <+> ppr (idType dfun_id)
                    ,text "ispec" <+> ppr ispec
+                   ,text "tmpl_subst" <+> ppr templ_subst
                    ,text "subst" <+> ppr subst
+                   ,text "dfun_theta" <+> ppr dfun_theta
                    ,text "theta" <+> ppr theta
                    ,text "tys" <+> ppr tys
-                   ,text "so" <+> ppr so]
-            ; -- Unify variables (instance matching produces evidence!)
-              unifyDeriveds loc (map (const Nominal) tys) tys tys'
+                   ,text "dfun_tvs" <+> ppr dfun_tvs]
+            ; tclvl <- getTcLevel
+            ; -- apply the substitutions to predicate type variables
+              forM_ (tyCoVarsOfTypesList tys) $ \tv -> do
+                case lookupTyVar subst tv of
+                  Nothing -> return ()
+                  Just rhs -> do_subst tclvl tv rhs
             ; -- Record that this dfun is needed
-              return $ GenInst { lir_new_theta = new_theta
-                               , lir_mk_ev     = EvDFunApp dfun_id inst_tvs
+              return $ GenInst { lir_new_theta = theta
+                               , lir_mk_ev     = EvDFunApp dfun_id tvs
                                , lir_safe_over = so } }
+
+     do_subst tclvl tv rhs' = do
+       -- XXX: rhs' <- zonkTcType rhs ?
+
+       -- emit a derived equality
+       unifyDerived loc Nominal (Pair (mkTyVarTy tv) rhs')
+       -- also do sneaky substitution for fillable vars
+       let can_fill = isTouchableMetaTyVar tclvl tv
+       when can_fill $ do
+         fill <- isFilledMetaTyVar_maybe tv
+         case fill of
+           Nothing -> do
+             unifyTyVar tv rhs'
+             void $ kickOutAfterUnification tv
+           Just _ -> return ()
 
 {- ********************************************************************
 *                                                                     *

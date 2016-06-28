@@ -3,6 +3,7 @@
 module TcCanonical(
      canonicalize,
      unifyDerived,
+     unifyWanted,
      makeSuperClasses,
      StopOrContinue(..), stopWith, continueWith
   ) where
@@ -1925,6 +1926,7 @@ unifyWanted loc role orig_ty1 orig_ty2
       = do { cos <- zipWith3M (unifyWanted loc)
                               (tyConRolesX role tc1) tys1 tys2
            ; return (mkTyConAppCo role tc1 cos) }
+    go ty1@(TyVarTy tv) (TyVarTy tv2) | tv == tv2 = return (mkReflCo role ty1)
     go (TyVarTy tv) ty2
       = do { mb_ty <- isFilledMetaTyVar_maybe tv
            ; case mb_ty of

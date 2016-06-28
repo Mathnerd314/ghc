@@ -2878,8 +2878,7 @@ extendFlatCache tc xi_args stuff
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 instDFunType :: TCvSubst -> [TyVar]
-             -> TcS ( TCvSubst      -- substitution with fresh variables
-                    , [TcType] )    -- instantiated argument types
+             -> TcS TCvSubst -- substitution with fresh variables
 instDFunType subst tyv
   = wrapTcS $ TcM.instDFunType subst tyv
 

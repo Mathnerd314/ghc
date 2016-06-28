@@ -57,6 +57,8 @@ import Var      ( EvVar, mkTyVar, TyVarBndr(..) )
 import DataCon
 import TyCon
 import VarEnv
+import VarSet
+import UniqFM (foldUFM)
 import PrelNames
 import SrcLoc
 import DynFlags
@@ -307,17 +309,21 @@ instCallConstraints orig preds
      | otherwise
      = emitWanted orig pred
 
-instDFunType :: TCvSubst -> [TyVar]
-             -> TcM ( TCvSubst      -- substitution with fresh variables
-                    , [TcType] )    -- instantiated argument types
+-- construct a substitution for a dfun with fresh variables
+instDFunType :: TCvSubst -> [TyVar] -> TcM TCvSubst
 -- See Note [DFunInstType: instantiating types] in InstEnv
-instDFunType subst tvs = mapAccumLM go subst tvs
+instDFunType subst tvs = do
+    let unbound_tvs = mkVarSet tvs `minusVarEnv` getTvSubstEnv subst
+    -- make new variables (safe b/c we're just building a substitution)
+    fresh_subst <- foldUFM f (return emptyTCvSubst) unbound_tvs
+    -- rewrite all the unbound terms (an actual use of composeTCvSubst!)
+    return $ fresh_subst `composeTCvSubst` subst
   where
-    go :: TCvSubst -> TyVar -> TcM (TCvSubst, TcType)
-    go subst tv = case lookupTyVar subst tv of
-            Just ty -> return (subst, ty)
-            Nothing -> do { (subst', tv') <- newMetaTyVarX subst tv
-                          ; return (subst', mkTyVarTy tv') }
+    f var prev = ASSERT (isTyVar var) do
+        -- we only handle types; no coercions
+        subst <- prev
+        (subst', _) <- newMetaTyVarX subst var
+        return subst'
 
 ----------------
 instStupidTheta :: CtOrigin -> TcThetaType -> TcM ()
