@@ -1958,15 +1958,15 @@ matchInstEnv dflags clas tys loc
      do_subst tclvl tv rhs' = do
        -- emit a derived equality
        unifyDerived loc Nominal (Pair (mkTyVarTy tv) rhs')
---        -- also do sneaky substitution for fillable vars
---        let can_fill = isTouchableMetaTyVar tclvl tv
---        when can_fill $ do
---          fill <- isFilledMetaTyVar_maybe tv
---          case fill of
---            Nothing -> do
---              unifyTyVar tv rhs'
---              void $ kickOutAfterUnification tv
---            Just _ -> return ()
+       -- also do sneaky substitution for fillable vars
+       let can_fill = isTouchableMetaTyVar tclvl tv
+       when can_fill $ do
+         fill <- isFilledMetaTyVar_maybe tv
+         case fill of
+           Nothing -> do
+             unifyTyVar tv rhs'
+             void $ kickOutAfterUnification tv
+           Just _ -> return ()
 
 {- ********************************************************************
 *                                                                     *

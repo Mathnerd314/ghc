@@ -102,13 +102,14 @@ solveEqualities :: TcM a -> TcM a
 solveEqualities thing_inside
   = checkNoErrs $  -- See Note [Fail fast on kind errors]
     do { (result, wanted) <- captureConstraints thing_inside
-       ; traceTc "solveEqualities {" $ text "wanted = " <+> ppr wanted
-       ; final_wc <- runTcSEqualities $ simpl_top wanted
-       ; traceTc "End solveEqualities }" empty
+       ; when (not $ isEmptyWC wanted) $ do
+          { traceTc "solveEqualities {" $ text "wanted = " <+> ppr wanted
+          ; final_wc <- runTcSEqualities $ simpl_top wanted
+          ; traceTc "End solveEqualities }" empty
 
-       ; traceTc "reportAllUnsolved {" empty
-       ; reportAllUnsolved final_wc
-       ; traceTc "reportAllUnsolved }" empty
+          ; traceTc "reportAllUnsolved {" empty
+          ; reportAllUnsolved final_wc
+          ; traceTc "reportAllUnsolved }" empty }
        ; return result }
 
 simpl_top :: WantedConstraints -> TcS WantedConstraints
