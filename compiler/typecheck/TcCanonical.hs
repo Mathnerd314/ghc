@@ -3,7 +3,6 @@
 module TcCanonical(
      canonicalize,
      unifyDerived,
-     unifyWanted,
      makeSuperClasses,
      StopOrContinue(..), stopWith, continueWith
   ) where

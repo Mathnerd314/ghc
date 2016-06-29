@@ -1388,12 +1388,12 @@ tcMissingParentClassWarn warnFlag isName shouldName
                     -> TcM ()
     checkShouldInst isClass shouldClass isInst
       = do { instEnv <- tcGetInstEnvs
-           ; let (instanceMatches, shouldInsts, _)
-                    = lookupInstEnv False False instEnv shouldClass (is_tys isInst)
+           ; let (instanceMatches, _)
+                    = lookupInstEnv False instEnv shouldClass (is_tys isInst)
 
            ; traceTc "tcMissingParentClassWarn/checkShouldInst"
                      (hang (ppr isInst) 4
-                         (sep [ppr instanceMatches, ppr shouldInsts]))
+                         (sep [ppr instanceMatches]))
 
            -- "<location>: Warning: <type> is an instance of <is> but not
            -- <should>" e.g. "Foo is an instance of Monad but not Applicative"
@@ -1410,7 +1410,7 @@ tcMissingParentClassWarn warnFlag isName shouldName
                            hsep [ text "This will become an error in"
                                 , text "a future release." ]
                  warnMsg _ = pure ()
-           ; when (null shouldInsts && null instanceMatches) $
+           ; when (null instanceMatches) $
                   warnMsg (is_tcs isInst)
            }
 

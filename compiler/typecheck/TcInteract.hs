@@ -1899,9 +1899,9 @@ matchInstEnv :: DynFlags -> Class -> [Type] -> CtLoc -> TcS LookupInstResult
 matchInstEnv dflags clas tys loc
    = do { instEnvs <- getInstEnvs
         ; let safeOverlapCheck = safeHaskell dflags `elem` [Sf_Safe, Sf_Trustworthy]
-              (matches, unify, unsafeOverlaps) = lookupInstEnv False True instEnvs clas tys
+              (matches, unsafeOverlaps) = lookupInstEnv True instEnvs clas tys
               safeHaskFail = safeOverlapCheck && not (null unsafeOverlaps)
-        ; case (matches ++ unify, safeHaskFail) of
+        ; case (matches, safeHaskFail) of
 
             -- Nothing matches
             ([], _)
@@ -1956,19 +1956,17 @@ matchInstEnv dflags clas tys loc
                                , lir_safe_over = so } }
 
      do_subst tclvl tv rhs' = do
-       -- XXX: rhs' <- zonkTcType rhs ?
-
        -- emit a derived equality
        unifyDerived loc Nominal (Pair (mkTyVarTy tv) rhs')
-       -- also do sneaky substitution for fillable vars
-       let can_fill = isTouchableMetaTyVar tclvl tv
-       when can_fill $ do
-         fill <- isFilledMetaTyVar_maybe tv
-         case fill of
-           Nothing -> do
-             unifyTyVar tv rhs'
-             void $ kickOutAfterUnification tv
-           Just _ -> return ()
+--        -- also do sneaky substitution for fillable vars
+--        let can_fill = isTouchableMetaTyVar tclvl tv
+--        when can_fill $ do
+--          fill <- isFilledMetaTyVar_maybe tv
+--          case fill of
+--            Nothing -> do
+--              unifyTyVar tv rhs'
+--              void $ kickOutAfterUnification tv
+--            Just _ -> return ()
 
 {- ********************************************************************
 *                                                                     *

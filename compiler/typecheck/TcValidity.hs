@@ -869,7 +869,7 @@ check_class_pred env dflags ctxt pred cls tys
        = return ()               -- of a data type declaration
        | otherwise
        = do { instEnvs <- tcGetInstEnvs
-            ; let (matches, _, _) = lookupInstEnv False False instEnvs cls tys
+            ; let (matches, _) = lookupInstEnv False instEnvs cls tys
                   bad_matches = [ inst | (inst,_) <- matches
                                        , not (isOverlappable inst) ]
             ; warnIf (Reason Opt_WarnSimplifiableClassConstraints)

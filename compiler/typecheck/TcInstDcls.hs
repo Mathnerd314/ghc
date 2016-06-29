@@ -769,7 +769,7 @@ tcInstDecl2 (InstInfo { iSpec = ispec, iBinds = ibinds })
              (class_tyvars, sc_theta, _, op_items) = classBigSig clas
              sc_theta' = substTheta (zipTvSubst class_tyvars inst_tys) sc_theta
 
-       ; traceTc "tcInstDecl2" (vcat [ppr inst_tyvars, ppr inst_tys, ppr dfun_theta, ppr sc_theta'])
+       ; traceTc "tcInstDecl2" (vcat [ppr (idType dfun_id), ppr inst_tyvars, ppr inst_tys, ppr dfun_theta, ppr sc_theta'])
 
                       -- Deal with 'SPECIALISE instance' pragmas
                       -- See Note [SPECIALISE instance pragmas]

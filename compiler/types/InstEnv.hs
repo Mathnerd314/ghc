@@ -433,9 +433,18 @@ identicalClsInstHead (ClsInst { is_cls_nm = cls_nm1, is_tcs = rough1, is_tys = t
 *                                                                      *
 ************************************************************************
 
-@lookupInstEnv@ looks up in a @InstEnv@, using unification.  Since
-the env is kept ordered, the first match must be the only one.  The
-thing we are looking up can have an arbitrary "flexi" part.
+@lookupInstEnv@ looks up in a @InstEnv@.
+We now use *unification* to look up instances, rather than the previous
+matching. Matching returns too few instances; consider
+     A a [c]
+in an InstEnv that has
+     A [b] b
+Previously, GHC would not instantiate this, since it would generate a
+constraint
+     a ~ [[c]]
+But such a constraint is perfectly acceptable.
+It does not add any ambiguity, because the check for overlap
+used unification regardless.
 
 Note [Instance lookup and orphan instances]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -464,6 +473,7 @@ There are two cases:
     we can't.
 
 Note [Rules for instance lookup]
+Note [Overlapping instances]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 These functions implement the carefully-written rules in the user
 manual section on "overlapping instances". At risk of duplication,
@@ -492,162 +502,78 @@ instance declaration itself, controlled as follows:
 Now suppose that, in some client module, we are searching for an instance
 of the target constraint (C ty1 .. tyn). The search works like this.
 
- * Find all instances I that match the target constraint; that is, the
-   target constraint is a substitution instance of I. These instance
-   declarations are the candidates.
+ * Find all instances that unify with the target constraint.
+   These instance declarations are the candidates.
 
- * Find all non-candidate instances that unify with the target
-   constraint. Such non-candidates instances might match when the
-   target constraint is further instantiated. If all of them are
-   incoherent, proceed; if not, the search fails.
+ * The candidates are considered in order, least specific to most specific,
+   then first declared to later declared, but this only matters for
+   incoherent instances.
 
- * Eliminate any candidate IX for which both of the following hold:
-   * There is another candidate IY that is strictly more specific;
-     that is, IY is a substitution instance of IX but not vice versa.
+ * Eliminate any candidate IX when there is another candidate IY
+   and either of the following holds:
+   (A) IX is incoherent
+   (B) IX is marked overlappable or IY is marked overlapping, AND
+       IY is strictly more specific than IX; that is, IY is a substitution
+        instance of IX, but not vice versa.
 
-   * Either IX is overlappable or IY is overlapping.
+ * If only one candidate remains, pick it. Otherwise fail.
 
- * If only one candidate remains, pick it. Otherwise if all remaining
-   candidates are incoherent, pick an arbitrary candidate. Otherwise fail.
+Note [Incoherent instances]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+For some classes, the choice of a particular instance does not matter, any one
+is good. Consider
 
-Note [Overlapping instances]   (NB: these notes are quite old)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Overlap is permitted, but only in such a way that one can make
-a unique choice when looking up.  That is, overlap is only permitted if
-one template matches the other, or vice versa.  So this is ok:
+        class D a b where { opD :: a -> b -> String }
+        foo :: x -> y -> String
+        foo x y = show x ++ show y
+        instance (Show b) => D Int b where opD = foo
+        instance (Show a) => D a Bool where opD = foo
 
-  [a]  [Int]
+        f = opD :: Int -> Char -> String -- works
+        g = opD :: Int -> Bool -> String -- fails; overlapping instances
 
-but this is not
+We could fix this by adding an instance {-# OVERLAPPING #-} D Int Bool, but
+in general working through all of the cases would be tedious. This is what
+-XIncoherentInstances is for: Telling GHC "I don't care which instance you use;
+if you can use one, use it."
 
-  (Int,a)  (b,Int)
+Note that, due to the rules about discarding incoherent instances, there will be
+no overlap even if all but one instance is incoherent.
+Example:
+        class C a b c where foo :: (a,b,c)
+        instance C [a] b Int
+        instance {-# incoherent #-} C [Int] b c
+        instance {-# incoherent #-} C a   Int c
+Thanks to the incoherent flags, these are both instantiated with the first instance:
+        x = foo :: ([a]  ,b  ,Int)
+        y = foo :: ([Int],Int,Int)
+This is based on the behavior of earlier GHC implementations.
 
-If overlap is permitted, the list is kept most specific first, so that
-the first lookup is the right choice.
+Note [Avoiding a problem with overlapping]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+Consider 'd' in testsuite/tests/typecheck/should_run/SuperclassOverlap.hs
+We have two dictionaries in scope, a 'C [a]' instance from the superclass constraint, and the normal 'C [a]' instance.
+The GHC policy is to always prefer Givens to environmental instances, so our program should print [2].
 
-For now we just use association lists.
+Note [Binding when looking up instances]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-\subsection{Avoiding a problem with overlapping}
+See testsuite/tests/typecheck/should_compile/tc179.hs.
 
-Consider this little program:
+The op [x,x] means we need (Foo [a]).  Without the filterVarSet we'd
+complain, saying that the choice of instance depended on the instantiation
+of 'a'; but of course it isn't *going* to be instantiated.
 
-\begin{pseudocode}
-     class C a        where c :: a
-     class C a => D a where d :: a
+We do this only for isOverlappableTyVar skolems.  For example we reject
+        g :: forall a => [a] -> Int
+        g x = op x
+on the grounds that the correct instance depends on the instantiation of 'a'
 
-     instance C Int where c = 17
-     instance D Int where d = 13
+The key_tys can contain skolem constants, and we can guarantee that those
+are never going to be instantiated to anything, so we should not involve
+them in the unification test.  Example:
 
-     instance C a => C [a] where c = [c]
-     instance ({- C [a], -} D a) => D [a] where d = c
-
-     instance C [Int] where c = [37]
-
-     main = print (d :: [Int])
-\end{pseudocode}
-
-What do you think `main' prints  (assuming we have overlapping instances, and
-all that turned on)?  Well, the instance for `D' at type `[a]' is defined to
-be `c' at the same type, and we've got an instance of `C' at `[Int]', so the
-answer is `[37]', right? (the generic `C [a]' instance shouldn't apply because
-the `C [Int]' instance is more specific).
-
-Ghc-4.04 gives `[37]', while ghc-4.06 gives `[17]', so 4.06 is wrong.  That
-was easy ;-)  Let's just consult hugs for good measure.  Wait - if I use old
-hugs (pre-September99), I get `[17]', and stranger yet, if I use hugs98, it
-doesn't even compile!  What's going on!?
-
-What hugs complains about is the `D [a]' instance decl.
-
-\begin{pseudocode}
-     ERROR "mj.hs" (line 10): Cannot build superclass instance
-     *** Instance            : D [a]
-     *** Context supplied    : D a
-     *** Required superclass : C [a]
-\end{pseudocode}
-
-You might wonder what hugs is complaining about.  It's saying that you
-need to add `C [a]' to the context of the `D [a]' instance (as appears
-in comments).  But there's that `C [a]' instance decl one line above
-that says that I can reduce the need for a `C [a]' instance to the
-need for a `C a' instance, and in this case, I already have the
-necessary `C a' instance (since we have `D a' explicitly in the
-context, and `C' is a superclass of `D').
-
-Unfortunately, the above reasoning indicates a premature commitment to the
-generic `C [a]' instance.  I.e., it prematurely rules out the more specific
-instance `C [Int]'.  This is the mistake that ghc-4.06 makes.  The fix is to
-add the context that hugs suggests (uncomment the `C [a]'), effectively
-deferring the decision about which instance to use.
-
-Now, interestingly enough, 4.04 has this same bug, but it's covered up
-in this case by a little known `optimization' that was disabled in
-4.06.  Ghc-4.04 silently inserts any missing superclass context into
-an instance declaration.  In this case, it silently inserts the `C
-[a]', and everything happens to work out.
-
-(See `basicTypes/MkId:mkDictFunId' for the code in question.  Search for
-`Mark Jones', although Mark claims no credit for the `optimization' in
-question, and would rather it stopped being called the `Mark Jones
-optimization' ;-)
-
-So, what's the fix?  I think hugs has it right.  Here's why.  Let's try
-something else out with ghc-4.04.  Let's add the following line:
-
-    d' :: D a => [a]
-    d' = c
-
-Everyone raise their hand who thinks that `d :: [Int]' should give a
-different answer from `d' :: [Int]'.  Well, in ghc-4.04, it does.  The
-`optimization' only applies to instance decls, not to regular
-bindings, giving inconsistent behavior.
-
-Old hugs had this same bug.  Here's how we fixed it: like GHC, the
-list of instances for a given class is ordered, so that more specific
-instances come before more generic ones.  For example, the instance
-list for C might contain:
-    ..., C Int, ..., C a, ...
-When we go to look for a `C Int' instance we'll get that one first.
-But what if we go looking for a `C b' (`b' is unconstrained)?  We'll
-pass the `C Int' instance, and keep going.  But if `b' is
-unconstrained, then we don't know yet if the more specific instance
-will eventually apply.  GHC keeps going, and matches on the generic `C
-a'.  The fix is to, at each step, check to see if there's a reverse
-match, and if so, abort the search.  This prevents hugs from
-prematurely chosing a generic instance when a more specific one
-exists.
-
---Jeff
-v
-BUT NOTE [Nov 2001]: we must actually *unify* not reverse-match in
-this test.  Suppose the instance envt had
-    ..., forall a b. C a a b, ..., forall a b c. C a b c, ...
-(still most specific first)
-Now suppose we are looking for (C x y Int), where x and y are unconstrained.
-        C x y Int  doesn't match the template {a,b} C a a b
-but neither does
-        C a a b  match the template {x,y} C x y Int
-But still x and y might subsequently be unified so they *do* match.
-
-Simple story: unify, don't match.
--}
-
-type DFunInstType = Maybe Type
-        -- Just ty   => Instantiate with this type
-        -- Nothing   => Instantiate with any type of this tyvar's kind
-        -- See Note [DFunInstType: instantiating types]
-
-type InstMatch = (ClsInst, TCvSubst)
-
-type ClsInstLookupResult
-     = ( [InstMatch]     -- Successful matches
-       , [InstMatch]     -- These don't match one-way but do unify
-       , [InstMatch] )   -- Unsafe overlapped instances under Safe Haskell
-                         -- (see Note [Safe Haskell Overlapping Instances] in
-                         -- TcSimplify).
-
-{-
 Note [DFunInstType: instantiating types]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 A successful match is a ClsInst, together with a template substitution.
@@ -660,7 +586,7 @@ The caller thus needs to know that 'b' is unbound, and create a fresh variable.
 
 Similarly, solving:
     class A x y
-    instance forall b c. A b [c]
+    instance A b [c]
     foo :: (A [a] a) => (a,a)
 we get:
     b -> [[c]], a -> [c]
@@ -670,23 +596,37 @@ which can be fixed later by fundeps etc.):
 It is assumed that the caller does this, if it uses the substitution.
 
 Finally, for this:
-    class A x y z
-    instance forall b c. A b [c] c
-    foo :: (A [a] a [d]) => (a,d)
+    class A x y
+    instance A [b] b
+    foo :: (A a [c]) => (a,c)
 we get as solution to the unification:
-    a -> [[d]], b -> [[[d]]], c -> [d]
-This d is assumed to be usable as-is, because it's part of the wanted constraint
+    a -> [[c]], b -> [c]
+c is not replaced with a fresh variable, because it's part of the given constraint.
+The caller must add the constraint a ~ [[c]] to the environment.
 -}
 
+type DFunInstType = Maybe Type
+        -- Just ty   => Instantiate with this type
+        -- Nothing   => Instantiate with any type of this tyvar's kind
+        -- See Note [DFunInstType: instantiating types]
+
+type InstMatch = (ClsInst, TCvSubst)
+
+type ClsInstLookupResult
+     = ( [InstMatch]     -- Successful matches (only instantiated if a unique instance is found)
+       , [InstMatch] )   -- Unsafe overlapped instances under Safe Haskell
+                         -- (see Note [Safe Haskell Overlapping Instances] in
+                         -- TcSimplify).
+
 -- |Look up an instance in the given instance environment. The given class application must match exactly
--- one instance and the match may not contain any flexi type variables.  If the lookup is unsuccessful,
+-- one instance and the unification must bind all class type variables.  If the lookup is unsuccessful,
 -- yield 'Left errorMessage'.
 lookupUniqueInstEnv :: InstEnvs
                     -> Class -> [Type]
                     -> Either MsgDoc (ClsInst, [Type])
 lookupUniqueInstEnv instEnv cls tys
-  = case lookupInstEnv False False instEnv cls tys of
-      ([(inst, subst)], _, _)
+  = case lookupInstEnv False instEnv cls tys of
+      ([(inst, subst)], _)
              | noFlexiVar -> Right (inst, inst_tys')
              | otherwise  -> Left $ text "flexible type variable:" <+>
                                     (ppr $ mkTyConApp (classTyCon cls) tys)
@@ -694,25 +634,14 @@ lookupUniqueInstEnv instEnv cls tys
                inst_tys = map (lookupTyVar subst) (is_tvs inst)
                inst_tys'  = [ty | Just ty <- inst_tys]
                noFlexiVar = all isJust inst_tys
-      _other -> Left $ text "instance not found" <+>
+      _other -> Left $ text "no unique instance found:" <+>
                        (ppr $ mkTyConApp (classTyCon cls) tys)
 
-lookupInstEnv' :: Maybe Int -- maximum number of matching instances to return
-               -> InstEnv          -- InstEnv to look in
+lookupInstEnv' :: InstEnv          -- InstEnv to look in
                -> VisibleOrphanModules   -- But filter against this
                -> Class -> [Type]  -- What we are looking for
                -> [InstMatch] -- Successful unifications
--- The second component of the result pair happens when we look up
---      Foo [a]
--- in an InstEnv that has entries for
---      Foo [Int]
---      Foo [b]
--- Then which we choose would depend on the way in which 'a'
--- is instantiated.  So we report that Foo [b] is a match (mapping b->a)
--- but Foo [Int] is a unifier.  This gives the caller a better chance of
--- giving a suitable error message
-
-lookupInstEnv' max_ret ie vis_mods cls tys
+lookupInstEnv' ie vis_mods cls tys
   = lookup ie
   where
     rough_tcs  = roughMatchTcs tys
@@ -720,20 +649,19 @@ lookupInstEnv' max_ret ie vis_mods cls tys
 
     --------------
     lookup env = case lookupUFM env cls of
-                   Nothing -> ([],[])   -- No instances for this class
-                   Just (ClsIE insts) -> find max_ret [] [] insts
+                   Nothing -> []   -- No instances for this class
+                   Just (ClsIE insts) -> find [] insts
 
     --------------
-    find _ ms us [] = (ms, us)
-    find (Just (0 :: Int)) ms us _ = (ms, us)
-    find m ms us (item@(ClsInst { is_tcs = mb_tcs, is_tvs = tpl_tvs
+    find ms [] = ms
+    find ms (item@(ClsInst { is_tcs = mb_tcs, is_tvs = tpl_tvs
                                 , is_tys = tpl_tys }) : rest)
       | not (instIsVisible vis_mods item)
-      = find m ms us rest  -- See Note [Instance lookup and orphan instances]
+      = find ms rest  -- See Note [Instance lookup and orphan instances]
 
         -- Fast check for no match, uses the "rough match" fields
       | instanceCantMatch rough_tcs mb_tcs
-      = find m ms us rest
+      = find ms rest
 
       | Just subst <- ASSERT2( tyCoVarsOfTypes tys `disjointVarSet` tpl_tv_set,
                                (ppr cls <+> ppr tys <+> ppr all_tvs) $$
@@ -743,55 +671,41 @@ lookupInstEnv' max_ret ie vis_mods cls tys
                       -- Unification will break badly if the variables overlap
                       -- They shouldn't because we allocate separate uniques for them
                       -- See Note [Template tyvars are fresh]
-      = find m' ((item, subst) : ms) us rest
+      = find ((item, subst) : ms) rest
 
-        -- Does not match
+        -- Does not match, keep looking
       | otherwise
-      = find m ms us rest
+      = find ms rest
       where
         tpl_tv_set = mkVarSet tpl_tvs
-        m' = fmap (\x -> x-1) m
 
 ---------------
 -- This is the common way to call this function.
-lookupInstEnv :: Bool              -- Return all potential instances
-              -> Bool              -- Check Safe Haskell overlap restrictions
+lookupInstEnv :: Bool              -- Check Safe Haskell overlap restrictions
               -> InstEnvs          -- External and home package inst-env
               -> Class -> [Type]   -- What we are looking for
               -> ClsInstLookupResult
 -- ^ See Note [Rules for instance lookup]
 -- ^ See Note [Safe Haskell Overlapping Instances] in TcSimplify
 -- ^ See Note [Safe Haskell Overlapping Instances Implementation] in TcSimplify
-lookupInstEnv show_potentials check_overlap_safe
+lookupInstEnv check_overlap_safe
               (InstEnvs { ie_global = pkg_ie
                         , ie_local = home_ie
                         , ie_visible = vis_mods })
               cls
               tys
   = -- pprTrace "lookupInstEnv" (ppr cls <+> ppr tys $$ ppr home_ie) $
-    (final_matches, final_unifs, unsafe_overlapped)
+    (final_matches, unsafe_overlapped)
   where
-    max_ret = if show_potentials then Nothing else Just 3
-
-    (home_matches, home_unifs) = lookupInstEnv' max_ret home_ie vis_mods cls tys
-    (pkg_matches,  pkg_unifs)  = lookupInstEnv' max_ret pkg_ie  vis_mods cls tys
-    all_matches = home_matches ++ pkg_matches
-    all_unifs   = home_unifs   ++ pkg_unifs
-    final_matches = foldr insert_overlapping [] all_matches
-        -- Even if the unifs is non-empty (an error situation)
-        -- we still prune the matches, so that the error message isn't
-        -- misleading (complaining of multiple matches when some should be
-        -- overlapped away)
+    home_unifs = lookupInstEnv' home_ie vis_mods cls tys
+    pkg_unifs  = lookupInstEnv' pkg_ie  vis_mods cls tys
+    all_unifs  = home_unifs ++ pkg_unifs
+    final_matches = foldr insert_overlapping [] all_unifs
 
     unsafe_overlapped
        = case final_matches of
            [match] -> check_safe match
            _       -> []
-
-    -- If the selected match is incoherent, discard all unifiers
-    final_unifs = case final_matches of
-                    (m:_) | isIncoherent (fst m) -> []
-                    _                            -> all_unifs
 
     -- NOTE [Safe Haskell isSafeOverlap]
     -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -806,7 +720,7 @@ lookupInstEnv show_potentials check_overlap_safe
     check_safe (inst,_)
         = case check_overlap_safe && unsafeTopInstance inst of
                 -- make sure it only overlaps instances from the same module
-                True -> go [] all_matches
+                True -> go [] all_unifs
                 -- most specific is from a trusted location.
                 False -> []
         where
@@ -823,135 +737,54 @@ lookupInstEnv show_potentials check_overlap_safe
                     lb = isInternalName nb
                 in (la && lb) || (nameModule na == nameModule nb)
 
-    -- We consider the most specific instance unsafe when it both:
+    -- We check if the most specific instance is unsafe when it both:
     --   (1) Comes from a module compiled as `Safe`
     --   (2) Is an orphan instance, OR, an instance for a MPTC
     unsafeTopInstance inst = isSafeOverlap (is_flag inst) &&
         (isOrphan (is_orphan inst) || classArity (is_cls inst) > 1)
 
----------------
-insert_overlapping :: InstMatch -> [InstMatch] -> [InstMatch]
--- ^ Add a new solution, knocking out strictly less specific ones
--- See Note [Rules for instance lookup]
-insert_overlapping new_item [] = [new_item]
-insert_overlapping new_item@(new_inst,_) (old_item@(old_inst,_) : old_items)
-  | new_beats_old        -- New strictly overrides old
-  , not old_beats_new
-  , new_inst `can_override` old_inst
-  = insert_overlapping new_item old_items
+    insert_overlapping :: InstMatch -> [InstMatch] -> [InstMatch]
+    -- ^ Add a new solution, knocking out strictly less specific ones
+    -- See Note [Rules for instance lookup]
+    insert_overlapping new_item [] = [new_item]
+    insert_overlapping new_item@(new_inst,_) (old_item@(old_inst,_) : old_items)
+      | new_beats_old        -- New strictly overrides old
+      , not old_beats_new
+      , new_inst `can_override` old_inst
+      = insert_overlapping new_item old_items
 
-  | old_beats_new        -- Old strictly overrides new
-  , not new_beats_old
-  , old_inst `can_override` new_inst
-  = old_item : old_items
+      | old_beats_new        -- Old strictly overrides new
+      , not new_beats_old
+      , old_inst `can_override` new_inst
+      = old_item : old_items
 
-  -- Discard incoherent instances; see Note [Incoherent instances]
-  | isIncoherent old_inst      -- Old is incoherent; discard it
-  = insert_overlapping new_item old_items
-  | isIncoherent new_inst      -- New is incoherent; discard it
-  = old_item : old_items
+      -- Discard incoherent instances; see Note [Incoherent instances]
+      | isIncoherent old_inst      -- Old is incoherent; discard it
+      = insert_overlapping new_item old_items
+      | isIncoherent new_inst      -- New is incoherent; discard it
+      = old_item : old_items
 
-  -- Equal or incomparable, and neither is incoherent; keep both
-  | otherwise
-  = old_item : insert_overlapping new_item old_items
-  where
+      -- Equal or incomparable, and neither is incoherent; keep both
+      | otherwise
+      = old_item : insert_overlapping new_item old_items
+      where
 
-    new_beats_old = new_inst `more_specific_than` old_inst
-    old_beats_new = old_inst `more_specific_than` new_inst
+        new_beats_old = new_inst `more_specific_than` old_inst
+        old_beats_new = old_inst `more_specific_than` new_inst
 
-    -- `instB` can be instantiated to match `instA`
-    -- or the two are equal
-    instA `more_specific_than` instB
-      = isJust (tcMatchTys (is_tys instB) (is_tys instA))
+        -- `instB` can be instantiated to match `instA`
+        -- or the two are equal
+        instA `more_specific_than` instB
+          = isJust (tcMatchTys (is_tys instB) (is_tys instA))
 
-    instA `can_override` instB
-       = isOverlapping instA || isOverlappable instB
-       -- Overlap permitted if either the more specific instance
-       -- is marked as overlapping, or the more general one is
-       -- marked as overlappable.
-       -- Latest change described in: Trac #9242.
-       -- Previous change: Trac #3877, Dec 10.
-
-{-
-Note [Incoherent instances]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-For some classes, the choice of a particular instance does not matter, any one
-is good. E.g. consider
-
-        class D a b where { opD :: a -> b -> String }
-        instance D Int b where ...
-        instance D a Int where ...
-
-        g (x::Int) = opD x x  -- Wanted: D Int Int
-
-For such classes this should work (without having to add an "instance D Int
-Int", and using -XOverlappingInstances, which would then work). This is what
--XIncoherentInstances is for: Telling GHC "I don't care which instance you use;
-if you can use one, use it."
-
-Should this logic only work when *all* candidates have the incoherent flag, or
-even when all but one have it? The right choice is the latter, which can be
-justified by comparing the behaviour with how -XIncoherentInstances worked when
-it was only about the unify-check (note [Overlapping instances]):
-
-Example:
-        class C a b c where foo :: (a,b,c)
-        instance C [a] b Int
-        instance [incoherent] [Int] b c
-        instance [incoherent] C a Int c
-Thanks to the incoherent flags,
-        [Wanted]  C [a] b Int
-works: Only instance one matches, the others just unify, but are marked
-incoherent.
-
-So I can write
-        (foo :: ([a],b,Int)) :: ([Int], Int, Int).
-but if that works then I really want to be able to write
-        foo :: ([Int], Int, Int)
-as well. Now all three instances from above match. None is more specific than
-another, so none is ruled out by the normal overlapping rules. One of them is
-not incoherent, but we still want this to compile. Hence the
-"all-but-one-logic".
-
-The implementation is in insert_overlapping, where we remove matching
-incoherent instances as long as there are others.
-
-
-
-************************************************************************
-*                                                                      *
-        Binding decisions
-*                                                                      *
-************************************************************************
--}
+        instA `can_override` instB
+          = isOverlapping instA || isOverlappable instB
+          -- Overlap permitted if either the more specific instance
+          -- is marked as overlapping, or the more general one is
+          -- marked as overlappable.
+          -- See [Rules for instance lookup], Trac #9242, Trac #3877
 
 instanceBindFun :: TyCoVar -> BindFlag
 instanceBindFun tv | isTcTyVar tv && isOverlappableTyVar tv = Skolem
                    | otherwise                              = BindMe
    -- Note [Binding when looking up instances]
-
-{-
-Note [Binding when looking up instances]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-When looking up in the instance environment, or family-instance environment,
-we are careful about multiple matches, as described above in
-Note [Overlapping instances]
-
-The key_tys can contain skolem constants, and we can guarantee that those
-are never going to be instantiated to anything, so we should not involve
-them in the unification test.  Example:
-        class Foo a where { op :: a -> Int }
-        instance Foo a => Foo [a]       -- NB overlap
-        instance Foo [Int]              -- NB overlap
-        data T = forall a. Foo a => MkT a
-        f :: T -> Int
-        f (MkT x) = op [x,x]
-The op [x,x] means we need (Foo [a]).  Without the filterVarSet we'd
-complain, saying that the choice of instance depended on the instantiation
-of 'a'; but of course it isn't *going* to be instantiated.
-
-We do this only for isOverlappableTyVar skolems.  For example we reject
-        g :: forall a => [a] -> Int
-        g x = op x
-on the grounds that the correct instance depends on the instantiation of 'a'
--}

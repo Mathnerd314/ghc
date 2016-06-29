@@ -1965,10 +1965,9 @@ mkDictErr :: ReportErrCtxt -> [Ct] -> TcM ErrMsg
 mkDictErr ctxt cts
   = ASSERT( not (null cts) )
     do { inst_envs <- tcGetInstEnvs
-       ; show_potentials <- gopt Opt_PrintPotentialInstances <$> getDynFlags
        ; let (ct1:_) = cts  -- ct1 just for its location
              min_cts = elim_superclasses cts
-             lookups = map (lookup_cls_inst show_potentials inst_envs) min_cts
+             lookups = map (lookup_cls_inst inst_envs) min_cts
              (no_inst_cts, overlap_cts) = partition is_no_inst lookups
 
        -- Report definite no-instance errors,
@@ -1981,14 +1980,13 @@ mkDictErr ctxt cts
   where
     no_givens = null (getUserGivens ctxt)
 
-    is_no_inst (ct, (matches, unifiers, _))
+    is_no_inst (ct, (matches, _))
       =  no_givens
       && null matches
-      && (null unifiers || all (not . isAmbiguousTyVar) (tyCoVarsOfCtList ct))
 
-    lookup_cls_inst show_potentials inst_envs ct
+    lookup_cls_inst inst_envs ct
                 -- Note [Flattening in error message generation]
-      = (ct, lookupInstEnv show_potentials True inst_envs clas (flattenTys emptyInScopeSet tys))
+      = (ct, lookupInstEnv True inst_envs clas (flattenTys emptyInScopeSet tys))
       where
         (clas, tys) = getClassPredTys (ctPred ct)
 
@@ -2005,23 +2003,22 @@ mk_dict_err :: ReportErrCtxt -> (Ct, ClsInstLookupResult)
             -> TcM (ReportErrCtxt, SDoc)
 -- Report an overlap error if this class constraint results
 -- from an overlap (returning Left clas), otherwise return (Right pred)
-mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_overlapped))
-  | null matches  -- No matches but perhaps several unifiers
+mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (unifiers, unsafe_overlapped))
+  | null unifiers -- No matches
   = do { (ctxt, binds_msg, ct) <- relevantBindings True ctxt ct
        ; candidate_insts <- get_candidate_instances
        ; return (ctxt, cannot_resolve_msg ct candidate_insts binds_msg) }
 
-  | null unsafe_overlapped   -- Some matches => overlap errors
+  | length unifiers > 1   -- Some matches => overlap errors
   = return (ctxt, overlap_msg)
 
-  | otherwise
+  | otherwise  -- only reached if it was unsafe
   = return (ctxt, safe_haskell_msg)
   where
     orig          = ctOrigin ct
     pred          = ctPred ct
     (clas, tys)   = getClassPredTys pred
-    ispecs        = [ispec | (ispec, _) <- matches]
-    unsafe_ispecs = [ispec | (ispec, _) <- unsafe_overlapped]
+    ispecs        = [ispec | (ispec, _) <- unifiers]
     useful_givens = discardProvCtxtGivens orig (getUserGivensFromImplics implics)
          -- useful_givens are the enclosing implications with non-empty givens,
          -- modulo the horrid discardProvCtxtGivens
@@ -2052,33 +2049,26 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
              , nest 2 extra_note
              , vcat (pp_givens useful_givens)
              , mb_patsyn_prov `orElse` empty
-             , ppWhen (has_ambig_tvs && not (null unifiers && null useful_givens))
-               (vcat [ ppUnless lead_with_ambig ambig_msg, binds_msg, potential_msg ])
+             , ppWhen (has_ambig_tvs && not (null useful_givens))
+               (vcat [ ambig_msg, binds_msg ])
 
              , ppWhen (isNothing mb_patsyn_prov) $
                    -- Don't suggest fixes for the provided context of a pattern
                    -- synonym; the right fix is to bind more in the pattern
                show_fixes (ctxtFixes has_ambig_tvs pred implics
                            ++ drv_fixes)
-             , ppWhen (not (null candidate_insts))
-               (hang (text "There are instances for similar types:")
-                   2 (vcat (map ppr candidate_insts))) ]
+             , sdocWithDynFlags $ \dflags ->
+               getPprStyle $ \sty ->
+               pprPotentials dflags sty (text "There are instances for similar types:") $
+               candidate_insts
+             ]
                    -- See Note [Report candidate instances]
       where
         orig = ctOrigin ct
-        -- See Note [Highlighting ambiguous type variables]
-        lead_with_ambig = has_ambig_tvs && not (any isRuntimeUnkSkol ambig_tvs)
-                        && not (null unifiers) && null useful_givens
 
-        (has_ambig_tvs, ambig_msg) = mkAmbigMsg lead_with_ambig ct
-        ambig_tvs = uncurry (++) (getAmbigTkvs ct)
+        (has_ambig_tvs, ambig_msg) = mkAmbigMsg False ct
 
         no_inst_msg
-          | lead_with_ambig
-          = ambig_msg <+> pprArising orig
-              $$ text "prevents the constraint" <+>  quotes (pprParendType pred)
-              <+> text "from being solved."
-
           | null useful_givens
           = addArising orig $ text "No instance for"
             <+> pprParendType pred
@@ -2087,32 +2077,13 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
           = addArising orig $ text "Could not deduce"
             <+> pprParendType pred
 
-        potential_msg
-          = ppWhen (not (null unifiers) && want_potential orig) $
-            sdocWithDynFlags $ \dflags ->
-            getPprStyle $ \sty ->
-            pprPotentials dflags sty potential_hdr (map fst unifiers)
-
-        potential_hdr
-          = vcat [ ppWhen lead_with_ambig $
-                     text "Probable fix: use a type annotation to specify what"
-                     <+> pprQuotedList ambig_tvs <+> text "should be."
-                 , text "These potential instance" <> plural unifiers
-                   <+> text "exist:"]
-
         mb_patsyn_prov :: Maybe SDoc
         mb_patsyn_prov
-          | not lead_with_ambig
-          , ProvCtxtOrigin PSB{ psb_def = L _ pat } <- orig
+          | ProvCtxtOrigin PSB{ psb_def = L _ pat } <- orig
           = Just (vcat [ text "In other words, a successful match on the pattern"
                        , nest 2 $ ppr pat
                        , text "does not provide the constraint" <+> pprParendType pred ])
           | otherwise = Nothing
-
-    -- Report "potential instances" only when the constraint arises
-    -- directly from the user's use of an overloaded function
-    want_potential (TypeEqOrigin {}) = False
-    want_potential _                 = True
 
     extra_note | any isFunTy (filterOutInvisibleTypes (classTyCon clas) tys)
                = text "(maybe you haven't applied a function to enough arguments?)"
@@ -2137,7 +2108,7 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
 
     -- Normal overlap error
     overlap_msg
-      = ASSERT( not (null matches) )
+      = ASSERT( not (null unifiers) )
         vcat [  addArising orig (text "Overlapping instances for"
                                 <+> pprType (mkClassPred clas tys))
 
@@ -2148,9 +2119,9 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
              ,  sdocWithDynFlags $ \dflags ->
                 getPprStyle $ \sty ->
                 pprPotentials dflags sty (text "Matching instances:") $
-                ispecs ++ (map fst unifiers)
+                ispecs
 
-             ,  ppWhen (null matching_givens && isSingleton matches && null unifiers) $
+             ,  ppWhen (null matching_givens && not (null useful_givens)) $
                 -- Intuitively, some given matched the wanted in their
                 -- flattened or rewritten (from given equalities) form
                 -- but the matcher can't figure that out because the
@@ -2160,8 +2131,7 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
                   sep [ text "There exists a (perhaps superclass) match:"
                       , nest 2 (vcat (pp_givens useful_givens))]
 
-             ,  ppWhen (isSingleton matches) $
-                parens (vcat [ text "The choice depends on the instantiation of" <+>
+             ,  parens (vcat [ text "The choice depends on the instantiation of" <+>
                                   quotes (pprWithCommas ppr (tyCoVarsOfTypesList tys))
                              , ppWhen (null (matching_givens)) $
                                vcat [ text "To pick the first instance above, use IncoherentInstances"
@@ -2186,10 +2156,10 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
                    -> any ev_var_matches (immSuperClasses clas' tys')
                  Nothing -> False
 
-    -- Overlap error because of Safe Haskell (first
-    -- match should be the most specific match)
+    -- Overlap error because of Safe Haskell
+    -- (matched uniqely but not allowed to use it)
     safe_haskell_msg
-     = ASSERT( length matches == 1 && not (null unsafe_ispecs) )
+     = ASSERT( length unifiers == 1 && not (null unsafe_overlapped) )
        vcat [ addArising orig (text "Unsafe overlapping instances for"
                        <+> pprType (mkClassPred clas tys))
             , sep [text "The matching instance is:",
@@ -2198,7 +2168,10 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
                    , text "overlap instances from the same module, however it"
                    , text "overlaps the following instances from different" <+>
                      text "modules:"
-                   , nest 2 (vcat [pprInstances $ unsafe_ispecs])
+                   , sdocWithDynFlags $ \dflags ->
+                     getPprStyle $ \sty ->
+                     pprPotentials dflags sty empty $
+                     map fst unsafe_overlapped
                    ]
             ]
 
@@ -2269,23 +2242,6 @@ something like
     There are instances for similar types:
       instance Num GHC.Types.Int -- Defined in ‘GHC.Num’
 Discussion in Trac #9611.
-
-Note [Highlighting ambiguous type variables]
-~-------------------------------------------
-When we encounter ambiguous type variables (i.e. type variables
-that remain metavariables after type inference), we need a few more
-conditions before we can reason that *ambiguity* prevents constraints
-from being solved:
-  - We can't have any givens, as encountering a typeclass error
-    with given constraints just means we couldn't deduce
-    a solution satisfying those constraints and as such couldn't
-    bind the type variable to a known type.
-  - If we don't have any unifiers, we don't even have potential
-    instances from which an ambiguity could arise.
-  - Lastly, I don't want to mess with error reporting for
-    unknown runtime types so we just fall back to the old message there.
-Once these conditions are satisfied, we can safely say that ambiguity prevents
-the constraint from being solved.
 
 Note [discardProvCtxtGivens]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
