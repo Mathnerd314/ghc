@@ -154,8 +154,11 @@ funsSigCtxt []              = panic "funSigCtxt"
 addSigCtxt :: UserTypeCtxt -> LHsType Name -> TcM a -> TcM a
 addSigCtxt ctxt hs_ty thing_inside
   = setSrcSpan (getLoc hs_ty) $
-    addErrCtxt (pprSigCtxt ctxt hs_ty) $
-    thing_inside
+    addErrCtxt (pprSigCtxt ctxt hs_ty) $ do
+      traceTc "type_sig {" $ pprUserTypeCtxt ctxt
+      r <- thing_inside
+      traceTc "type_sig }" $ pprUserTypeCtxt ctxt
+      return r
 
 pprSigCtxt :: UserTypeCtxt -> LHsType Name -> SDoc
 -- (pprSigCtxt ctxt <extra> <type>)
@@ -902,7 +905,7 @@ tcTyVar :: TcTyMode -> Name -> TcM (TcType, TcKind)
 -- See Note [Type checking recursive type and class declarations]
 -- in TcTyClsDecls
 tcTyVar mode name         -- Could be a tyvar, a tycon, or a datacon
-  = do { traceTc "lk1" (ppr name)
+  = do { traceTc "tcTyVar" $ hsep [ppr mode, ppr name]
        ; thing <- tcLookup name
        ; case thing of
            ATyVar _ tv -> return (mkTyVarTy tv, tyVarKind tv)

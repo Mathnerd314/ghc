@@ -1439,6 +1439,8 @@ We must solve both!
 -}
 
 unflatten :: Cts -> Cts -> TcS Cts
+unflatten tv_eqs funeqs | isEmptyCts tv_eqs
+                        , isEmptyCts funeqs = return emptyCts
 unflatten tv_eqs funeqs
  = do { dflags   <- getDynFlags
       ; tclvl    <- getTcLevel

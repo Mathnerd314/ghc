@@ -806,6 +806,7 @@ nameType name ty = do
 
 -- | Check whether a set of type constraints is satisfiable.
 tyOracle :: Bag EvVar -> PmM Bool
+tyOracle evs | isEmptyBag evs = return True
 tyOracle evs
   = do { ((_warns, errs), res) <- initTcDsForSolver $ tcCheckSatisfiability evs
        ; case res of

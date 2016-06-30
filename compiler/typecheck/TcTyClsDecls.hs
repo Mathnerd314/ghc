@@ -146,7 +146,7 @@ tcTyClGroup (TyClGroup { group_tyclds = tyclds
                        , group_roles  = roles
                        , group_instds = instds })
   = do { let role_annots = mkRoleAnnotEnv roles
-
+       ; traceTc "tcTyClGroup {" empty
            -- Step 1: Typecheck the type/class declarations
        ; tyclss <- tcTyClDecls tyclds role_annots
 
@@ -154,9 +154,7 @@ tcTyClGroup (TyClGroup { group_tyclds = tyclds
            -- We can do this now because we are done with the recursive knot
            -- Do it before Step 3 (adding implicit things) because the latter
            -- expects well-formed TyCons
-       ; traceTc "Starting validity check" (ppr tyclss)
        ; tyclss <- mapM checkValidTyCl tyclss
-       ; traceTc "Done validity check" (ppr tyclss)
        ; mapM_ (recoverM (return ()) . checkValidRoleAnnots role_annots) tyclss
            -- See Note [Check role annotations in a second pass]
 
@@ -170,6 +168,7 @@ tcTyClGroup (TyClGroup { group_tyclds = tyclds
             -- Step 4: check instance declarations
        ; (gbl_env, inst_info, datafam_deriv_info) <- tcInstDecls1 instds
 
+       ; traceTc "tcTyClGroup }" empty
        ; return (gbl_env, inst_info, datafam_deriv_info) } } }
 
 
@@ -306,7 +305,7 @@ kcTyClGroup :: [LTyClDecl Name] -> TcM [TcTyCon]
 -- the arity
 kcTyClGroup decls
   = do  { mod <- getModule
-        ; traceTc "kcTyClGroup" (text "module" <+> ppr mod $$ vcat (map ppr decls))
+        ; traceTc "kcTyClGroup {" (text "module" <+> ppr mod $$ vcat (map ppr decls))
 
           -- Kind checking;
           --    1. Bind kind variables for non-synonyms
@@ -338,7 +337,7 @@ kcTyClGroup decls
              -- Now we have to kind generalize the flexis
         ; res <- concatMapM (generaliseTCD (tcl_env lcl_env)) decls
 
-        ; traceTc "kcTyClGroup result" (vcat (map pp_res res))
+        ; traceTc "} kcTyClGroup result" (vcat (map pp_res res))
         ; return res }
 
   where
@@ -749,7 +748,7 @@ tcTyClDecl1 _parent rec_info
                  -- This little knot is just so we can get
                  -- hold of the name of the class TyCon, which we
                  -- need to look up its recursiveness
-               ; traceTc "tcClassDecl 1" (ppr class_name $$ ppr binders)
+               ; traceTc "tcClassDecl {" (ppr class_name $$ ppr binders)
                ; let tycon_name = tyConName (classTyCon clas)
                      tc_isrec = rti_is_rec rec_info tycon_name
                      roles = rti_roles rec_info tycon_name
@@ -765,8 +764,8 @@ tcTyClDecl1 _parent rec_info
                             class_name binders roles ctxt'
                             fds' at_stuff
                             sig_stuff mindef tc_isrec
-               ; traceTc "tcClassDecl" (ppr fundeps $$ ppr binders $$
-                                        ppr fds')
+               ; traceTc "} tcClassDecl"
+                    (ppr fundeps $$ ppr binders $$ ppr fds')
                ; return clas }
 
          ; return (classTyCon clas) }
@@ -2052,9 +2051,9 @@ checkValidTyCl tc
   = setSrcSpan (getSrcSpan tc) $
     addTyConCtxt tc $
     recoverM recovery_code
-             (do { traceTc "Starting validity for tycon" (ppr tc)
+             (do { traceTc "Starting validity for tycon {" (ppr tc)
                  ; checkValidTyCon tc
-                 ; traceTc "Done validity for tycon" (ppr tc)
+                 ; traceTc "} Done validity for tycon" (ppr tc)
                  ; return tc })
   where
     recovery_code -- See Note [Recover from validity error]

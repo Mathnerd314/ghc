@@ -371,6 +371,7 @@ tcExtendKindEnv2 :: [(Name, TcTyThing)] -> TcM r -> TcM r
 -- Used only during kind checking, for TcThings that are
 --      ATcTyCon or APromotionErr
 -- No need to update the global tyvars, or tcl_th_bndrs, or tcl_rdr
+tcExtendKindEnv2 [] thing_inside = thing_inside
 tcExtendKindEnv2 things thing_inside
   = do { traceTc "txExtendKindEnv" (ppr things)
        ; updLclEnv upd_env thing_inside }
@@ -471,6 +472,7 @@ tcExtendIdEnv2 names_w_ids thing_inside
 
 tc_extend_local_env :: TopLevelFlag -> [(Name, TcTyThing)]
                     -> TcM a -> TcM a
+tc_extend_local_env _ [] thing_inside = thing_inside
 tc_extend_local_env top_lvl extra_env thing_inside
 -- Precondition: the argument list extra_env has TcTyThings
 --               that ATcId or ATyVar, but nothing else
@@ -485,7 +487,7 @@ tc_extend_local_env top_lvl extra_env thing_inside
 -- The second argument of type TyVarSet is a set of type variables
 -- that are bound together with extra_env and should not be regarded
 -- as free in the types of extra_env.
-  = do  { traceTc "env2" (ppr extra_env)
+  = do  { traceTc "env2" $ hsep [ppr top_lvl, ppr extra_env]
         ; env0 <- getLclEnv
         ; env1 <- tcExtendLocalTypeEnv env0 extra_env
         ; stage <- getStage

@@ -479,6 +479,7 @@ tcRnSrcDecls explicit_mod_hdr decls
                               checkMain explicit_mod_hdr
                  ; return (tcg_env, tcl_env) }
 
+      ; traceTc "Tc8" empty
         -- Emit Typeable bindings
       ; tcg_env <- setGblEnv tcg_env mkTypeableBinds
 
@@ -1152,11 +1153,9 @@ tcTopSrcDecls (HsGroup { hs_tyclds = tycl_decls,
 
         setGblEnv tcg_env       $ do {
 
-                -- Generate Applicative/Monad proposal (AMP) warnings
         traceTc "Tc3b" empty ;
-
+                -- Generate Applicative/Monad proposal (AMP) warnings
                 -- Generate Semigroup/Monoid warnings
-        traceTc "Tc3c" empty ;
         tcSemigroupWarnings ;
 
                 -- Foreign import declarations next.
@@ -1204,7 +1203,7 @@ tcTopSrcDecls (HsGroup { hs_tyclds = tycl_decls,
         vects <- tcVectDecls vect_decls ;
 
                 -- Wrap up
-        traceTc "Tc7a" empty ;
+        traceTcConstraints "Tc7a" ;
         let { all_binds = inst_binds     `unionBags`
                           foe_binds
 
@@ -1481,7 +1480,7 @@ check_main dflags tcg_env explicit_mod_hdr
                            ; return tcg_env } ;
              Just main_name -> do
 
-        { traceTc "checkMain found" (ppr main_mod <+> ppr main_fn)
+        { traceTc "checkMain found {" (ppr main_mod <+> ppr main_fn)
         ; let loc = srcLocSpan (getSrcLoc main_name)
         ; ioTyCon <- tcLookupTyCon ioTyConName
         ; res_ty <- newFlexiTyVarTy liftedTypeKind
@@ -1504,6 +1503,7 @@ check_main dflags tcg_env explicit_mod_hdr
               ; rhs = nlHsApp (mkLHsWrap co (nlHsVar run_main_id)) main_expr
               ; main_bind = mkVarBind root_main_id rhs }
 
+        ; traceTc "} checkMain" empty
         ; return (tcg_env { tcg_main  = Just main_name,
                             tcg_binds = tcg_binds tcg_env
                                         `snocBag` main_bind,

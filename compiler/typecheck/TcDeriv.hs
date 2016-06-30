@@ -367,6 +367,8 @@ mkDerivInfos decls = concatMapM (mk_deriv . unLoc) decls
 tcDeriving  :: [DerivInfo]       -- All `deriving` clauses
             -> [LDerivDecl Name] -- All stand-alone deriving declarations
             -> TcM (TcGblEnv, Bag (InstInfo Name), HsValBinds Name)
+tcDeriving [] [] = do { g <- getGblEnv
+                      ; return (g, emptyBag, emptyValBindsOut)}
 tcDeriving deriv_infos deriv_decls
   = recoverM (do { g <- getGblEnv
                  ; return (g, emptyBag, emptyValBindsOut)}) $

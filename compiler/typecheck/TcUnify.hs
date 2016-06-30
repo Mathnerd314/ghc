@@ -1093,14 +1093,12 @@ uType_defer origin t_or_k ty1 ty2
 --------------
 uType origin t_or_k orig_ty1 orig_ty2
   = do { tclvl <- getTcLevel
-       ; traceTc "u_tys " $ vcat
+       ; traceTc "u_tys {" $ vcat
               [ text "tclvl" <+> ppr tclvl
               , sep [ ppr orig_ty1, text "~", ppr orig_ty2]
               , pprCtOrigin origin]
        ; co <- go orig_ty1 orig_ty2
-       ; if isReflCo co
-            then traceTc "u_tys yields no coercion" Outputable.empty
-            else traceTc "u_tys yields coercion:" (ppr co)
+       ; traceTc "} u_tys yields coercion:" (ppr co)
        ; return co }
   where
     go :: TcType -> TcType -> TcM Coercion

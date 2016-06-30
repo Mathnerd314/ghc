@@ -464,13 +464,13 @@ tcClsInstDecl (L loc (ClsInstDecl { cid_poly_ty = poly_ty, cid_binds = binds
                                   , cid_datafam_insts = adts }))
   = setSrcSpan loc                      $
     addErrCtxt (instDeclCtxt1 poly_ty)  $
-    do  { (tyvars, theta, clas, inst_tys) <- tcHsClsInstType InstDeclCtxt poly_ty
+    do  { traceTc "tcLocalInstDecl {" (ppr poly_ty)
+        ; (tyvars, theta, clas, inst_tys) <- tcHsClsInstType InstDeclCtxt poly_ty
         ; let mini_env   = mkVarEnv (classTyVars clas `zip` inst_tys)
               mini_subst = mkTvSubst (mkInScopeSet (mkVarSet tyvars)) mini_env
               mb_info    = Just (clas, tyvars, mini_env)
 
         -- Next, process any associated types.
-        ; traceTc "tcLocalInstDecl" (ppr poly_ty)
         ; tyfam_insts0  <- tcExtendTyVarEnv tyvars $
                            mapAndRecoverM (tcTyFamInstDecl mb_info) ats
         ; datafam_stuff <- tcExtendTyVarEnv tyvars $
@@ -504,6 +504,7 @@ tcClsInstDecl (L loc (ClsInstDecl { cid_poly_ty = poly_ty, cid_binds = binds
 
         ; doClsInstErrorChecks inst_info
 
+        ; traceTc "} tcLocalInstDecl" (ppr inst_info)
         ; return ( [inst_info], tyfam_insts0 ++ concat tyfam_insts1 ++ datafam_insts
                  , deriv_infos ) }
 
@@ -769,7 +770,7 @@ tcInstDecl2 (InstInfo { iSpec = ispec, iBinds = ibinds })
              (class_tyvars, sc_theta, _, op_items) = classBigSig clas
              sc_theta' = substTheta (zipTvSubst class_tyvars inst_tys) sc_theta
 
-       ; traceTc "tcInstDecl2" (vcat [ppr (idType dfun_id), ppr inst_tyvars, ppr inst_tys, ppr dfun_theta, ppr sc_theta'])
+       ; traceTc "tcInstDecl2 {" (vcat [ppr (idType dfun_id), ppr inst_tyvars, ppr inst_tys, ppr dfun_theta, ppr sc_theta'])
 
                       -- Deal with 'SPECIALISE instance' pragmas
                       -- See Note [SPECIALISE instance pragmas]
@@ -854,6 +855,7 @@ tcInstDecl2 (InstInfo { iSpec = ispec, iBinds = ibinds })
                                   , abs_ev_binds = []
                                   , abs_binds = unitBag dict_bind }
 
+       ; traceTc "} tcInstDecl2" empty
        ; return (unitBag (L loc main_bind) `unionBags` sc_meth_binds)
        }
  where

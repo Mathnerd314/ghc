@@ -420,8 +420,10 @@ tc_group top_lvl sig_fn prag_fn (NonRecursive, binds) closed thing_inside
                  [bind] -> bind
                  []     -> panic "tc_group: empty list of binds"
                  _      -> panic "tc_group: NonRecursive binds is not a singleton bag"
+       ; traceTc "tc_group norec {" (ppr bind)
        ; (bind', thing) <- tc_single top_lvl sig_fn prag_fn bind closed
                                      thing_inside
+       ; traceTc "tc_group norec }" (ppr bind')
        ; return ( [(NonRecursive, bind')], thing) }
 
 tc_group top_lvl sig_fn prag_fn (Recursive, binds) closed thing_inside
@@ -430,9 +432,10 @@ tc_group top_lvl sig_fn prag_fn (Recursive, binds) closed thing_inside
         -- any references to variables with type signatures.
         -- (This used to be optional, but isn't now.)
         -- See Note [Polymorphic recursion] in HsBinds.
-    do  { traceTc "tc_group rec" (pprLHsBinds binds)
+    do  { traceTc "tc_group rec {" (pprLHsBinds binds)
         ; when hasPatSyn $ recursivePatSynErr binds
         ; (binds1, thing) <- go sccs
+        ; traceTc "tc_group rec }" (pprLHsBinds binds1)
         ; return ([(Recursive, binds1)], thing) }
                 -- Rec them all together
   where
@@ -1055,12 +1058,14 @@ where F is a non-injective type function.
 ********************************************************************* -}
 
 tcVectDecls :: [LVectDecl Name] -> TcM ([LVectDecl TcId])
+tcVectDecls [] = return []
 tcVectDecls decls
-  = do { decls' <- mapM (wrapLocM tcVect) decls
+  = do { traceTc "tcVectDecls {" empty
+       ; decls' <- mapM (wrapLocM tcVect) decls
        ; let ids  = [lvectDeclName decl | decl <- decls', not $ lvectInstDecl decl]
              dups = findDupsEq (==) ids
        ; mapM_ reportVectDups dups
-       ; traceTcConstraints "End of tcVectDecls"
+       ; traceTc "} tcVectDecls" empty
        ; return decls'
        }
   where
