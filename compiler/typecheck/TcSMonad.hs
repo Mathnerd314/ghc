@@ -101,7 +101,6 @@ module TcSMonad (
 
     -- Misc
     getDefaultInfo, getDynFlags, getGlobalRdrEnvTcS,
-    matchFam, matchFamTcM,
     checkWellStagedDFun,
     pprEq                                    -- Smaller utils, re-exported from TcM
                                              -- TODO (DV): these are only really used in the
@@ -3074,15 +3073,6 @@ checkReductionDepth loc ty
        ; when (subGoalDepthExceeded dflags (ctLocDepth loc)) $
          wrapErrTcS $
          solverDepthErrorTcS loc ty }
-
-matchFam :: TyCon -> [Type] -> TcS (Maybe (Coercion, TcType))
-matchFam tycon args = wrapTcS $ matchFamTcM tycon args
-
-matchFamTcM :: TyCon -> [Type] -> TcM (Maybe (Coercion, TcType))
--- Given (F tys) return (ty, co), where co :: F tys ~ ty
-matchFamTcM tycon args
-  = do { fam_envs <- FamInst.tcGetFamInstEnvs
-       ; return $ reduceTyFamApp_maybe fam_envs Nominal tycon args }
 
 {-
 Note [Residual implications]

@@ -52,10 +52,13 @@ import VarEnv
 import Control.Monad
 import Maybes( isJust )
 import Pair (Pair(..))
-import Unique( hasKey )
+import Unique( hasKey, getUnique )
 import DynFlags
 import Util
 import qualified GHC.LanguageExtensions as LangExt
+
+import TrieMap
+import UniqDFM
 
 {-
 **********************************************************************
@@ -437,8 +440,7 @@ React with (F Int ~ b) ==> IR Stop True []    -- after substituting we re-canoni
 
 thePipeline :: [(String,SimplifierStage)]
 thePipeline = [ ("canonicalization",        TcCanonical.canonicalize)
-              , ("interact with inerts",    interactWithInertsStage)
-              , ("top-level reactions",     topReactionsStage) ]
+              , ("interact with inerts",    interactWithInertsStage) ]
 
 {-
 *********************************************************************************
@@ -486,9 +488,13 @@ interactWithInertsStage wi
        ; let ics = inert_cans inerts
        ; case wi of
              CTyEqCan    {} -> interactTyVarEq ics wi
-             CFunEqCan   {} -> interactFunEq   ics wi
+             CFunEqCan   {} -> interactFunEq ics wi
              CIrredEvCan {} -> interactIrred   ics wi
-             CDictCan    {} -> interactDict    ics wi
+             CDictCan    {} -> do
+                a <- interactDict ics wi
+                case a of
+                  Stop{} -> return a
+                  ContinueWith ct -> doTopReactDict inerts ct
              _ -> pprPanic "interactWithInerts" (ppr wi) }
                 -- CHoleCan are put straight into inert_frozen, so never get here
                 -- CNonCanonical have been canonicalised
@@ -823,7 +829,7 @@ which would lead to an error.
 
 I can think of two ways to fix this:
 
-  1. Simply disallow multiple constratits for the same implicit
+  1. Simply disallow multiple constraints for the same implicit
     parameter---this is never useful, and it can be detected completely
     syntactically.
 
@@ -843,33 +849,42 @@ interactFunEq :: InertCans -> Ct -> TcS (StopOrContinue Ct)
 -- Try interacting the work item with the inert set
 interactFunEq inerts workItem@(CFunEqCan { cc_ev = ev, cc_fun = tc
                                          , cc_tyargs = args, cc_fsk = fsk })
-  | Just (CFunEqCan { cc_ev = ev_i
-                    , cc_fsk = fsk_i }) <- matching_inerts
-  = if ev_i `funEqCanDischarge` ev
-    then  -- Rewrite work-item using inert
-      do { traceTcS "reactFunEq (discharge work item):" $
-           vcat [ text "workItem =" <+> ppr workItem
-                , text "inertItem=" <+> ppr ev_i ]
-         ; reactFunEq ev_i fsk_i ev fsk
-         ; stopWith ev "Inert rewrites work item" }
-    else  -- Rewrite inert using work-item
-      ASSERT2( ev `funEqCanDischarge` ev_i, ppr ev $$ ppr ev_i )
-      do { traceTcS "reactFunEq (rewrite inert item):" $
-           vcat [ text "workItem =" <+> ppr workItem
-                , text "inertItem=" <+> ppr ev_i ]
-         ; updInertFunEqs $ \ feqs -> insertFunEq feqs tc args workItem
-               -- Do the updInertFunEqs before the reactFunEq, so that
-               -- we don't kick out the inertItem as well as consuming it!
-         ; reactFunEq ev fsk ev_i fsk_i
-         ; stopWith ev "Work item rewrites inert" }
-
-  | otherwise   -- Try improvement
-  = do { improveLocalFunEqs loc inerts tc args fsk
-       ; continueWith workItem }
-  where
-    loc             = ctEvLoc ev
-    funeqs          = inert_funeqs inerts
-    matching_inerts = findFunEq funeqs tc args
+  = do let loc = ctEvLoc ev
+       let funeqs = inert_funeqs inerts :: UniqDFM (ListMap LooseTypeMap Ct)
+       let matching_inerts = do
+            tys_map <- lookupUDFM funeqs (getUnique tc) -- a map from @[DeBruijn Type]@ to @a@
+            lookupTM args tys_map
+       case matching_inerts of
+          Just (CFunEqCan { cc_ev = ev_i
+                              , cc_fsk = fsk_i }) ->
+            if ev_i `funEqCanDischarge` ev
+                then  -- Rewrite work-item using inert
+                  do { traceTcS "reactFunEq (discharge work item):" $
+                      vcat [ text "workItem =" <+> ppr workItem
+                            , text "inertItem=" <+> ppr ev_i ]
+                    ; reactFunEq ev_i fsk_i ev fsk
+                    ; stopWith ev "Inert rewrites work item" }
+                else  -- Rewrite inert using work-item
+                  ASSERT2( ev `funEqCanDischarge` ev_i, ppr ev $$ ppr ev_i )
+                  do { traceTcS "reactFunEq (rewrite inert item):" $
+                      vcat [ text "workItem =" <+> ppr workItem
+                            , text "inertItem=" <+> ppr ev_i ]
+                    ; updInertFunEqs $ \ feqs -> insertFunEq feqs tc args workItem
+                          -- Do the updInertFunEqs before the reactFunEq, so that
+                          -- we don't kick out the inertItem as well as consuming it!
+                    ; reactFunEq ev fsk ev_i fsk_i
+                    ; stopWith ev "Work item rewrites inert" }
+          Nothing -> do
+            fam_envs <- getFamInstEnvs :: TcS (FamInstEnv, FamInstEnv)
+            let match_res = reduceTyFamApp_maybe fam_envs Nominal tc args
+              -- Look up in top-level instances, or built-in axiom
+              -- See Note [MATCHING-SYNONYMS]
+            case match_res of
+              Just (ax_co, rhs_ty)
+                -> reduce_top_fun_eq ev fsk ax_co rhs_ty
+              Nothing -> do improveLocalFunEqs loc inerts tc args fsk
+                            improveTopFunEqs   loc        tc args fsk
+                            continueWith workItem
 
 interactFunEq _ workItem = pprPanic "interactFunEq" (ppr workItem)
 
@@ -1270,31 +1285,6 @@ emitFunDepDeriveds fd_eqns
 **********************************************************************
 -}
 
-topReactionsStage :: WorkItem -> TcS (StopOrContinue Ct)
-topReactionsStage wi
- = do { tir <- doTopReact wi
-      ; case tir of
-          ContinueWith wi -> continueWith wi
-          Stop ev s       -> return (Stop ev (text "Top react:" <+> s)) }
-
-doTopReact :: WorkItem -> TcS (StopOrContinue Ct)
--- The work item does not react with the inert set, so try interaction with top-level
--- instances. Note:
---
---   (a) The place to add superclasses in not here in doTopReact stage.
---       Instead superclasses are added in the worklist as part of the
---       canonicalization process. See Note [The Superclass Story]
---       in TcCanonical.
-
-doTopReact work_item
-  = do { traceTcS "doTopReact" (ppr work_item)
-       ; case work_item of
-           CDictCan {}  -> do { inerts <- getTcSInerts
-                              ; doTopReactDict inerts work_item }
-           CFunEqCan {} -> doTopReactFunEq work_item
-           _  -> -- Any other work item does not react with any top-level equations
-                 continueWith work_item  }
-
 --------------------
 doTopReactDict :: InertSet -> Ct -> TcS (StopOrContinue Ct)
 -- Try to use type-class instance declarations to simplify the constraint
@@ -1388,20 +1378,6 @@ doTopReactDict inerts work_item@(CDictCan { cc_ev = fl, cc_class = cls
 doTopReactDict _ w = pprPanic "doTopReactDict" (ppr w)
 
 --------------------
-doTopReactFunEq :: Ct -> TcS (StopOrContinue Ct)
-doTopReactFunEq work_item@(CFunEqCan { cc_ev = old_ev, cc_fun = fam_tc
-                                     , cc_tyargs = args, cc_fsk = fsk })
-  = do { match_res <- matchFam fam_tc args
-                           -- Look up in top-level instances, or built-in axiom
-                           -- See Note [MATCHING-SYNONYMS]
-       ; case match_res of
-           Nothing -> do { improveTopFunEqs (ctEvLoc old_ev) fam_tc args fsk
-                         ; continueWith work_item }
-           Just (ax_co, rhs_ty)
-             -> reduce_top_fun_eq old_ev fsk ax_co rhs_ty }
-
-doTopReactFunEq w = pprPanic "doTopReactFunEq" (ppr w)
-
 reduce_top_fun_eq :: CtEvidence -> TcTyVar -> TcCoercion -> TcType
                   -> TcS (StopOrContinue Ct)
 -- Found an applicable top-level axiom: use it to reduce

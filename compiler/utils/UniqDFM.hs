@@ -15,7 +15,7 @@ is not deterministic.
 -}
 
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFunctor, DeriveFoldable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -Wall #-}
 
@@ -111,7 +111,7 @@ data TaggedVal val =
   TaggedVal
     val
     {-# UNPACK #-} !Int -- ^ insertion time
-  deriving Data
+  deriving (Data, Functor, Foldable)
 
 taggedFst :: TaggedVal val -> val
 taggedFst (TaggedVal v _) = v
@@ -122,9 +122,6 @@ taggedSnd (TaggedVal _ i) = i
 instance Eq val => Eq (TaggedVal val) where
   (TaggedVal v1 _) == (TaggedVal v2 _) = v1 == v2
 
-instance Functor TaggedVal where
-  fmap f (TaggedVal val i) = TaggedVal (f val) i
-
 -- | Type of unique deterministic finite maps
 data UniqDFM ele =
   UDFM
@@ -134,7 +131,13 @@ data UniqDFM ele =
                                 -- be distinct within a single map
     {-# UNPACK #-} !Int         -- Upper bound on the values' insertion
                                 -- time. See Note [Overflow on plusUDFM]
-  deriving (Data, Functor)
+  deriving Data
+
+instance Functor UniqDFM where
+  fmap = mapUDFM
+
+instance Foldable UniqDFM where
+  foldr = foldUDFM
 
 emptyUDFM :: UniqDFM elt
 emptyUDFM = UDFM M.empty 0

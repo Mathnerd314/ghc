@@ -1035,7 +1035,7 @@ reduceTyFamApp_maybe :: FamInstEnvs
 --    but *not* newtypes
 -- Works on type-synonym families always; data-families only if
 --     the role we seek is representational
--- It does *not* normlise the type arguments first, so this may not
+-- It does *not* normalise the type arguments first, so this may not
 --     go as far as you want. If you want normalised type arguments,
 --     use normaliseTcArgs first.
 --
@@ -1044,39 +1044,39 @@ reduceTyFamApp_maybe :: FamInstEnvs
 --
 -- Always returns a *homogeneous* coercion -- type family reductions are always
 -- homogeneous
-reduceTyFamApp_maybe envs role tc tys
-  | Phantom <- role
-  = Nothing
-
-  | case role of
-      Representational -> isOpenFamilyTyCon     tc
-      _                -> isOpenTypeFamilyTyCon tc
+reduceTyFamApp_maybe envs Phantom tc tys = Nothing
+reduceTyFamApp_maybe envs role tc tys = do
+  let isOpenFam | role == Representational = isOpenFamilyTyCon tc
+                | otherwise = isOpenTypeFamilyTyCon tc
        -- If we seek a representational coercion
        -- (e.g. the call in topNormaliseType_maybe) then we can
        -- unwrap data families as well as type-synonym families;
        -- otherwise only type-synonym families
-  , FamInstMatch { fim_instance = FamInst { fi_axiom = ax }
-                 , fim_tys      = inst_tys
-                 , fim_cos      = inst_cos } : _ <- lookupFamInstEnv envs tc tys
-      -- NB: Allow multiple matches because of compatible overlap
-
-  = let co = mkUnbranchedAxInstCo role ax inst_tys inst_cos
-        ty = pSnd (coercionKind co)
-    in Just (co, ty)
-
-  | Just ax <- isClosedSynFamilyTyConWithAxiom_maybe tc
-  , Just (ind, inst_tys, inst_cos) <- chooseBranch ax tys
-  = let co = mkAxInstCo role ax ind inst_tys inst_cos
-        ty = pSnd (coercionKind co)
-    in Just (co, ty)
-
-  | Just ax           <- isBuiltInSynFamTyCon_maybe tc
-  , Just (coax,ts,ty) <- sfMatchFam ax tys
-  = let co = mkAxiomRuleCo coax (zipWith mkReflCo (coaxrAsmpRoles coax) ts)
-    in Just (co, ty)
-
-  | otherwise
-  = Nothing
+      instances | isOpenFam = lookupFamInstEnv envs tc tys
+                | otherwise = []
+      -- NB: Ignore multiple matches because of compatible overlap
+      -- compatibility is checked at declaration time by lookupFamInstConflicts
+      openFamMatches = take 1 $ map instToCo instances
+      instToCo (FamInstMatch
+          { fim_instance = FamInst { fi_axiom = ax }
+          , fim_tys      = inst_tys
+          , fim_cos      = inst_cos }) =
+              let co = mkUnbranchedAxInstCo role ax inst_tys inst_cos
+              in (co, pSnd (coercionKind co))
+      closedFamMatches = maybeToList $ do
+          ax <- isClosedSynFamilyTyConWithAxiom_maybe tc
+          (ind, inst_tys, inst_cos) <- chooseBranch ax tys
+          let co = mkAxInstCo role ax ind inst_tys inst_cos
+              ty = pSnd (coercionKind co)
+          return (co, ty)
+      synMatches = maybeToList $ do
+          ax <- isBuiltInSynFamTyCon_maybe tc
+          (coax,ts,ty) <- sfMatchFam ax tys
+          let co = mkAxiomRuleCo coax (zipWith mkReflCo (coaxrAsmpRoles coax) ts)
+          return (co, ty)
+  case openFamMatches ++ closedFamMatches ++ synMatches of
+      [a] -> Just a
+      _ -> Nothing
 
 -- The axiom can be oversaturated. (Closed families only.)
 chooseBranch :: CoAxiom Branched -> [Type]

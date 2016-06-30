@@ -22,6 +22,7 @@ import NameEnv
 import Outputable
 import TcSMonad as TcS
 import DynFlags( DynFlags )
+import FamInstEnv
 
 import Util
 import Bag
@@ -1185,7 +1186,8 @@ flatten_exact_fam_app_fully tc tys
                   -> FlatM (Xi, Coercion)
     try_to_reduce tc tys cache update_co k
       = do { checkStackDepth (mkTyConApp tc tys)
-           ; mb_match <- liftTcS $ matchFam tc tys
+           ; fam_envs <- liftTcS $ getFamInstEnvs
+           ; let mb_match = reduceTyFamApp_maybe fam_envs Nominal tc tys
            ; case mb_match of
                Just (norm_co, norm_ty)
                  -> do { traceFlat "Eager T.F. reduction success" $

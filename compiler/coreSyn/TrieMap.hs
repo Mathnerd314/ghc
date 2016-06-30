@@ -9,13 +9,14 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module TrieMap(
    CoreMap, emptyCoreMap, extendCoreMap, lookupCoreMap, foldCoreMap,
    TypeMap, emptyTypeMap, extendTypeMap, lookupTypeMap, foldTypeMap,
    LooseTypeMap,
    MaybeMap,
    ListMap,
-   TrieMap(..), insertTM, deleteTM
+   TrieMap(..), insertTM, deleteTM, mapTM, foldTM
  ) where
 
 import CoreSyn
@@ -65,9 +66,13 @@ class TrieMap m where
    emptyTM  :: m a
    lookupTM :: forall b. Key m -> m b -> Maybe b
    alterTM  :: forall b. Key m -> XT b -> m b -> m b
-   mapTM    :: (a->b) -> m a -> m b
 
-   foldTM   :: (a -> b -> b) -> m a -> b -> b
+
+mapTM :: Functor m => (a->b) -> m a -> m b
+mapTM = fmap
+
+foldTM :: Foldable m => (a -> b -> b) -> m a -> b -> b
+foldTM k m z = foldr k z m
       -- The unusual argument order here makes
       -- it easy to compose calls to foldTM;
       -- see for example fdE below
@@ -115,8 +120,6 @@ instance TrieMap IntMap.IntMap where
   emptyTM = IntMap.empty
   lookupTM k m = IntMap.lookup k m
   alterTM = xtInt
-  foldTM k m z = IntMap.fold k z m
-  mapTM f m = IntMap.map f m
 
 xtInt :: Int -> XT a -> IntMap.IntMap a -> IntMap.IntMap a
 xtInt k f m = IntMap.alter f k m
@@ -126,8 +129,6 @@ instance Ord k => TrieMap (Map.Map k) where
   emptyTM = Map.empty
   lookupTM = Map.lookup
   alterTM k f m = Map.alter f k m
-  foldTM k m z = Map.fold k z m
-  mapTM f m = Map.map f m
 
 
 {-
@@ -202,8 +203,6 @@ instance TrieMap UniqDFM where
   emptyTM = emptyUDFM
   lookupTM k m = lookupUDFM m k
   alterTM k f m = alterUDFM f m k
-  foldTM k m z = foldUDFM k z m
-  mapTM f m = mapUDFM f m
 
 {-
 ************************************************************************
@@ -218,15 +217,19 @@ then (MaybeMap m) is a map from (Maybe k) -> val
 
 data MaybeMap m a = MM { mm_nothing  :: Maybe a, mm_just :: m a }
 
+instance Functor m => Functor (MaybeMap m) where
+  fmap = mapMb
+
+instance Foldable m => Foldable (MaybeMap m) where
+  foldr k m z = fdMaybe k z m
+
 instance TrieMap m => TrieMap (MaybeMap m) where
    type Key (MaybeMap m) = Maybe (Key m)
    emptyTM  = MM { mm_nothing = Nothing, mm_just = emptyTM }
    lookupTM = lkMaybe lookupTM
    alterTM  = xtMaybe alterTM
-   foldTM   = fdMaybe
-   mapTM    = mapMb
 
-mapMb :: TrieMap m => (a->b) -> MaybeMap m a -> MaybeMap m b
+mapMb :: Functor m => (a->b) -> MaybeMap m a -> MaybeMap m b
 mapMb f (MM { mm_nothing = mn, mm_just = mj })
   = MM { mm_nothing = fmap f mn, mm_just = mapTM f mj }
 
@@ -240,7 +243,7 @@ xtMaybe :: (forall b. k -> XT b -> m b -> m b)
 xtMaybe _  Nothing  f m = m { mm_nothing  = f (mm_nothing m) }
 xtMaybe tr (Just x) f m = m { mm_just = mm_just m |> tr x f }
 
-fdMaybe :: TrieMap m => (a -> b -> b) -> MaybeMap m a -> b -> b
+fdMaybe :: Foldable m => (a -> b -> b) -> MaybeMap m a -> b -> b
 fdMaybe k m = foldMaybe k (mm_nothing m)
             . foldTM k (mm_just m)
 
@@ -261,10 +264,14 @@ instance TrieMap m => TrieMap (ListMap m) where
    emptyTM  = LM { lm_nil = Nothing, lm_cons = emptyTM }
    lookupTM = lkList lookupTM
    alterTM  = xtList alterTM
-   foldTM   = fdList
-   mapTM    = mapList
 
-mapList :: TrieMap m => (a->b) -> ListMap m a -> ListMap m b
+instance Foldable m => Foldable (ListMap m) where
+   foldr m k z = fdList m z k
+
+instance Functor m => Functor (ListMap m) where
+   fmap = mapList
+
+mapList :: Functor m => (a->b) -> ListMap m a -> ListMap m b
 mapList f (LM { lm_nil = mnil, lm_cons = mcons })
   = LM { lm_nil = fmap f mnil, lm_cons = mapTM (mapTM f) mcons }
 
@@ -278,7 +285,7 @@ xtList :: TrieMap m => (forall b. k -> XT b -> m b -> m b)
 xtList _  []     f m = m { lm_nil  = f (lm_nil m) }
 xtList tr (x:xs) f m = m { lm_cons = lm_cons m |> tr x |>> xtList tr xs f }
 
-fdList :: forall m a b. TrieMap m
+fdList :: forall m a b. Foldable m
        => (a -> b -> b) -> ListMap m a -> b -> b
 fdList k m = foldMaybe k          (lm_nil m)
            . foldTM    (fdList k) (lm_cons m)
@@ -358,8 +365,12 @@ instance (Eq (Key m), TrieMap m) => TrieMap (GenMap m) where
    emptyTM  = EmptyMap
    lookupTM = lkG
    alterTM  = xtG
-   foldTM   = fdG
-   mapTM    = mapG
+
+instance Functor m => Functor (GenMap m) where
+   fmap = mapG
+
+instance Foldable m => Foldable (GenMap m) where
+   foldr m k z = fdG m z k
 
 -- NB: Be careful about RULES and type families (#5821).  So we should make sure
 -- to specify @Key TypeMapX@ (and not @DeBruijn Type@, the reduced form)
@@ -405,7 +416,7 @@ xtG k f (MultiMap m) = MultiMap (alterTM k f m)
 {-# SPECIALIZE mapG :: (a -> b) -> TypeMapG a     -> TypeMapG b #-}
 {-# SPECIALIZE mapG :: (a -> b) -> CoercionMapG a -> CoercionMapG b #-}
 {-# SPECIALIZE mapG :: (a -> b) -> CoreMapG a     -> CoreMapG b #-}
-mapG :: TrieMap m => (a -> b) -> GenMap m a -> GenMap m b
+mapG :: Functor m => (a -> b) -> GenMap m a -> GenMap m b
 mapG _ EmptyMap = EmptyMap
 mapG f (SingletonMap k v) = SingletonMap k (f v)
 mapG f (MultiMap m) = MultiMap (mapTM f m)
@@ -413,7 +424,7 @@ mapG f (MultiMap m) = MultiMap (mapTM f m)
 {-# SPECIALIZE fdG :: (a -> b -> b) -> TypeMapG a     -> b -> b #-}
 {-# SPECIALIZE fdG :: (a -> b -> b) -> CoercionMapG a -> b -> b #-}
 {-# SPECIALIZE fdG :: (a -> b -> b) -> CoreMapG a     -> b -> b #-}
-fdG :: TrieMap m => (a -> b -> b) -> GenMap m a -> b -> b
+fdG :: Foldable m => (a -> b -> b) -> GenMap m a -> b -> b
 fdG _ EmptyMap = \z -> z
 fdG k (SingletonMap _ v) = \z -> k v z
 fdG k (MultiMap m) = foldTM k m
@@ -458,14 +469,13 @@ See also Note [Empty case alternatives] in CoreSyn.
 -- | @CoreMap a@ is a map from 'CoreExpr' to @a@.  If you are a client, this
 -- is the type you want.
 newtype CoreMap a = CoreMap (CoreMapG a)
+  deriving (Functor, Foldable)
 
 instance TrieMap CoreMap where
     type Key CoreMap = CoreExpr
     emptyTM = CoreMap emptyTM
     lookupTM k (CoreMap m) = lookupTM (deBruijnize k) m
     alterTM k f (CoreMap m) = CoreMap (alterTM (deBruijnize k) f m)
-    foldTM k (CoreMap m) = foldTM k m
-    mapTM f (CoreMap m) = CoreMap (mapTM f m)
 
 -- | @CoreMapG a@ is a map from @DeBruijn CoreExpr@ to @a@.  The extended
 -- key makes it suitable for recursive traversal, since it can track binders,
@@ -543,8 +553,12 @@ instance TrieMap CoreMapX where
    emptyTM  = emptyE
    lookupTM = lkE
    alterTM  = xtE
-   foldTM   = fdE
-   mapTM    = mapE
+
+instance Functor CoreMapX where
+  fmap = mapE
+
+instance Foldable CoreMapX where
+  foldr m k z = fdE m z k
 
 --------------------------
 mapE :: (a->b) -> CoreMapX a -> CoreMapX b
@@ -676,8 +690,12 @@ instance TrieMap AltMap where
                  , am_lit  = emptyLiteralMap }
    lookupTM = lkA emptyCME
    alterTM  = xtA emptyCME
-   foldTM   = fdA
-   mapTM    = mapA
+
+instance Functor AltMap where
+   fmap = mapA
+
+instance Foldable AltMap where
+   foldr m k z = fdA m z k
 
 instance Eq (DeBruijn CoreAlt) where
   D env1 a1 == D env2 a2 = go a1 a2 where
@@ -727,25 +745,23 @@ fdA k m = foldTM k (am_deflt m)
 -- We should really never care about the contents of a coercion. Instead,
 -- just look up the coercion's type.
 newtype CoercionMap a = CoercionMap (CoercionMapG a)
+  deriving (Functor, Foldable)
 
 instance TrieMap CoercionMap where
    type Key CoercionMap = Coercion
    emptyTM                     = CoercionMap emptyTM
    lookupTM k  (CoercionMap m) = lookupTM (deBruijnize k) m
    alterTM k f (CoercionMap m) = CoercionMap (alterTM (deBruijnize k) f m)
-   foldTM k    (CoercionMap m) = foldTM k m
-   mapTM f     (CoercionMap m) = CoercionMap (mapTM f m)
 
 type CoercionMapG = GenMap CoercionMapX
 newtype CoercionMapX a = CoercionMapX (TypeMapX a)
+  deriving (Functor, Foldable)
 
 instance TrieMap CoercionMapX where
   type Key CoercionMapX = DeBruijn Coercion
   emptyTM = CoercionMapX emptyTM
   lookupTM = lkC
   alterTM  = xtC
-  foldTM f (CoercionMapX core_tm) = foldTM f core_tm
-  mapTM f (CoercionMapX core_tm)  = CoercionMapX (mapTM f core_tm)
 
 instance Eq (DeBruijn Coercion) where
   D env1 co1 == D env2 co2
@@ -802,8 +818,12 @@ instance TrieMap TypeMapX where
    emptyTM  = emptyT
    lookupTM = lkT
    alterTM  = xtT
-   foldTM   = fdT
-   mapTM    = mapT
+
+instance Functor TypeMapX where
+  fmap = mapT
+
+instance Foldable TypeMapX where
+  foldr m k z = fdT m z k
 
 instance Eq (DeBruijn Type) where
   env_t@(D env t) == env_t'@(D env' t')
@@ -912,8 +932,12 @@ instance TrieMap TyLitMap where
    emptyTM  = emptyTyLitMap
    lookupTM = lkTyLit
    alterTM  = xtTyLit
-   foldTM   = foldTyLit
-   mapTM    = mapTyLit
+
+instance Functor TyLitMap where
+  fmap = mapTyLit
+
+instance Foldable TyLitMap where
+  foldr m k z = foldTyLit m z k
 
 emptyTyLitMap :: TyLitMap a
 emptyTyLitMap = TLM { tlm_number = Map.empty, tlm_string = Map.empty }
@@ -943,6 +967,12 @@ foldTyLit l m = flip (Map.fold l) (tlm_string m)
 -- is the type you want. The keys in this map may have different kinds.
 newtype TypeMap a = TypeMap (TypeMapG (TypeMapG a))
 
+instance Functor TypeMap where
+  fmap f (TypeMap m) = TypeMap (mapTM (mapTM f) m)
+
+instance Foldable TypeMap where
+  foldr k z (TypeMap m) = foldTM (foldTM k) m z
+
 lkTT :: DeBruijn Type -> TypeMap a -> Maybe a
 lkTT (D env ty) (TypeMap m) = lkG (D env $ typeKind ty) m
                           >>= lkG (D env ty)
@@ -959,8 +989,6 @@ instance TrieMap TypeMap where
     emptyTM = TypeMap emptyTM
     lookupTM k m = lkTT (deBruijnize k) m
     alterTM k f m = xtTT (deBruijnize k) f m
-    foldTM k (TypeMap m) = foldTM (foldTM k) m
-    mapTM f (TypeMap m) = TypeMap (mapTM (mapTM f) m)
 
 foldTypeMap :: (a -> b -> b) -> b -> TypeMap a -> b
 foldTypeMap k z m = foldTM k m z
@@ -978,14 +1006,13 @@ extendTypeMap m t v = alterTM t (const (Just v)) m
 -- you'll find entries inserted under (t), even if (g) is non-reflexive.
 newtype LooseTypeMap a
   = LooseTypeMap (TypeMapG a)
+  deriving (Functor, Foldable)
 
 instance TrieMap LooseTypeMap where
   type Key LooseTypeMap = Type
   emptyTM = LooseTypeMap emptyTM
   lookupTM k (LooseTypeMap m) = lookupTM (deBruijnize k) m
   alterTM k f (LooseTypeMap m) = LooseTypeMap (alterTM (deBruijnize k) f m)
-  foldTM f (LooseTypeMap m) = foldTM f m
-  mapTM f (LooseTypeMap m) = LooseTypeMap (mapTM f m)
 
 {-
 ************************************************************************
@@ -1064,8 +1091,12 @@ instance TrieMap VarMap where
    emptyTM  = VM { vm_bvar = IntMap.empty, vm_fvar = emptyDVarEnv }
    lookupTM = lkVar emptyCME
    alterTM  = xtVar emptyCME
-   foldTM   = fdVar
-   mapTM    = mapVar
+
+instance Functor VarMap where
+  fmap = mapVar
+
+instance Foldable VarMap where
+  foldr m k z = fdVar m z k
 
 mapVar :: (a->b) -> VarMap a -> VarMap b
 mapVar f (VM { vm_bvar = bv, vm_fvar = fv })
